@@ -1,0 +1,29 @@
+name: Example -- deepen-grade CI gate
+
+# Copy this into your own robot-data repo. Fails the PR if any dataset under
+# `data/` scores below the minimum grade -- "fail the data PR before bad
+# episodes reach the training set."
+on:
+  pull_request:
+    paths:
+      - "data/**"
+
+jobs:
+  grade-dataset:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Grade the dataset
+        uses: deepen-ai/deepen-grade@v0
+        with:
+          path: data/sample_dataset
+          min-grade: "B"
+          extras: lerobot
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepen-grade-report
+          path: deepen-grade-report.json

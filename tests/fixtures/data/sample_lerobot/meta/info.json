@@ -1,0 +1,30 @@
+{
+  "fps": 20,
+  "total_episodes": 2,
+  "features": {
+    "observation.state": {
+      "dtype": "float32",
+      "shape": [
+        4
+      ],
+      "names": [
+        "joint_1",
+        "joint_2",
+        "joint_3",
+        "gripper"
+      ]
+    },
+    "action": {
+      "dtype": "float32",
+      "shape": [
+        4
+      ],
+      "names": [
+        "joint_1",
+        "joint_2",
+        "joint_3",
+        "gripper"
+      ]
+    }
+  }
+}

@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+name: "deepen-grade"
+description: >-
+  Grade a robot-learning dataset (.mcap/.bag/.db3/LeRobot) with deepen-grade
+  and fail the job if it doesn't meet a minimum grade -- a CI gate for
+  robot-data PRs. Runs entirely locally; nothing uploads.
+author: "Deepen AI"
+branding:
+  icon: "check-circle"
+  color: "green"
+
+inputs:
+  path:
+    description: "Path (or HuggingFace repo-id) of the dataset to grade."
+    required: true
+  min-grade:
+    description: "Minimum acceptable overall grade (A/B/C/D/F). Fails the step if not met."
+    required: false
+    default: "C"
+  extras:
+    description: "deepen-grade extra(s) to install: mcap, ros, lerobot, or all."
+    required: false
+    default: "all"
+  python-version:
+    description: "Python version to run deepen-grade with."
+    required: false
+    default: "3.11"
+  report-path:
+    description: "Where to write the JSON report."
+    required: false
+    default: "deepen-grade-report.json"
+
+outputs:
+  grade:
+    description: "Overall letter grade."
+    value: ${{ steps.grade.outputs.grade }}
+  score:
+    description: "Overall numeric score (0-100)."
+    value: ${{ steps.grade.outputs.score }}
+  report-path:
+    description: "Path to the JSON report written by this run."
+    value: ${{ inputs.report-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install deepen-grade
+      shell: bash
+      run: pip install "deepen-grade[${{ inputs.extras }}]"
+
+    - name: Run deepen grade
+      id: grade
+      shell: bash
+      run: |
+        set +e
+        deepen grade "${{ inputs.path }}" --json --min-grade "${{ inputs.min-grade }}" \
+          -o "${{ inputs.report-path }}"
+        gate_status=$?
+
+        grade=$(python -c "import json;print(json.load(open('${{ inputs.report-path }}'))['overall']['grade'])")
+        score=$(python -c "import json;print(json.load(open('${{ inputs.report-path }}'))['overall']['score'])")
+        echo "grade=$grade" >> "$GITHUB_OUTPUT"
+        echo "score=$score" >> "$GITHUB_OUTPUT"
+        echo "## deepen-grade: $grade ($score/100)" >> "$GITHUB_STEP_SUMMARY"
+        echo "Full report: \`${{ inputs.report-path }}\` (uploaded as an artifact by the caller workflow)." >> "$GITHUB_STEP_SUMMARY"
+
+        exit $gate_status

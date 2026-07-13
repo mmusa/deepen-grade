@@ -1,0 +1,46 @@
+rosbag2_bagfile_information:
+  compression_format: ''
+  compression_mode: ''
+  custom_data: null
+  duration:
+    nanoseconds: 9950000128
+  files:
+  - duration:
+      nanoseconds: 9950000128
+    message_count: 600
+    path: sample_ros2.db3
+    starting_time:
+      nanoseconds_since_epoch: 1700000000000000000
+  message_count: 600
+  relative_file_paths:
+  - sample_ros2.db3
+  ros_distro: rosbags
+  starting_time:
+    nanoseconds_since_epoch: 1700000000000000000
+  storage_identifier: sqlite3
+  topics_with_message_count:
+  - message_count: 200
+    topic_metadata:
+      name: /joint_states
+      offered_qos_profiles: []
+      serialization_format: cdr
+      type: sensor_msgs/msg/JointState
+      type_description_hash: 
+        RIHS01_a13ee3a330e346c9d87b5aa18d24e11690752bd33a0350f11c5882bc9179260e
+  - message_count: 200
+    topic_metadata:
+      name: /joint_command
+      offered_qos_profiles: []
+      serialization_format: cdr
+      type: sensor_msgs/msg/JointState
+      type_description_hash: 
+        RIHS01_a13ee3a330e346c9d87b5aa18d24e11690752bd33a0350f11c5882bc9179260e
+  - message_count: 200
+    topic_metadata:
+      name: /gripper/joint_states
+      offered_qos_profiles: []
+      serialization_format: cdr
+      type: sensor_msgs/msg/JointState
+      type_description_hash: 
+        RIHS01_a13ee3a330e346c9d87b5aa18d24e11690752bd33a0350f11c5882bc9179260e
+  version: 9
