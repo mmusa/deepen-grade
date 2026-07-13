@@ -163,7 +163,7 @@ deepen grade path/to/dataset --json --min-grade B
 ```
 exits non-zero if the overall grade is worse than `B`. A ready-to-use
 composite GitHub Action is in [`action/`](action/action.yml); see
-[`.github/workflows/example-ci-gate.yml`](.github/workflows/example-ci-gate.yml)
+[`examples/ci-gate.yml`](examples/ci-gate.yml) (copy it into `.github/workflows/` in your repo)
 for a full workflow that runs it on every PR touching a dataset directory.
 
 ```yaml
