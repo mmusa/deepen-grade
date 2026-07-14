@@ -11,9 +11,9 @@ from deepen_grade.grading import DatasetGrade, EpisodeGrade
 from deepen_grade.report.terminal import render_terminal
 
 
-def _console_output(grade: DatasetGrade, verified: bool = False) -> str:
+def _console_output(grade: DatasetGrade) -> str:
     console = Console(record=True, width=120)
-    render_terminal(grade, verified, console=console)
+    render_terminal(grade, console=console)
     return console.export_text()
 
 

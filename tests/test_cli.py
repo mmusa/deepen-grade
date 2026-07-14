@@ -65,11 +65,14 @@ def test_share_report_dry_run_writes_payload_and_warns(sample_mcap, tmp_path):
     assert "not implemented" in result.output.lower()
 
 
-def test_badge_markdown_present_when_verified(sample_lerobot):
+def test_report_is_a_self_assessment_with_calibration_verdict(sample_lerobot):
     result = CliRunner().invoke(main, ["grade", str(sample_lerobot), "--json"])
     report = json.loads(result.output)
-    if report["overall"]["verified"]:
-        assert report["badge_markdown"] is not None
-        assert "Deepen Verified" in report["badge_markdown"]
-    else:
-        assert report["badge_markdown"] is None
+    assert report["report_type"] == "self-assessment"
+    assert "not reviewed, signed, or attested" in report["self_assessment_note"]
+    assert report["calibration"]["verdict"]
+    assert report["calibration"]["detail"]
+    # No honor-system trust marks anywhere in the free tier.
+    assert "verified" not in report["overall"]
+    assert "badge_markdown" not in report
+    assert "Deepen Verified" not in json.dumps(report)

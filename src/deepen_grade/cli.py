@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.markup import escape
 
 from deepen_grade.__about__ import __version__
-from deepen_grade.grading import GRADE_BANDS, grade_dataset, passes_verification
+from deepen_grade.grading import GRADE_BANDS, grade_dataset
 from deepen_grade.ingest import load_dataset
 from deepen_grade.ingest.exceptions import DatasetReadError, MissingOptionalDependencyError, UnsupportedFormatError
 from deepen_grade.report import build_report, render_terminal, share_report
@@ -51,8 +51,7 @@ def grade(source, fmt, as_json, output_path, min_grade, cache_dir, share, share_
         sys.exit(2)
 
     dataset_grade = grade_dataset(dataset)
-    verified = passes_verification(dataset_grade)
-    report = build_report(dataset_grade, verified)
+    report = build_report(dataset_grade)
 
     if share:
         try:
@@ -68,7 +67,7 @@ def grade(source, fmt, as_json, output_path, min_grade, cache_dir, share, share_
         else:
             click.echo(text)
     else:
-        render_terminal(dataset_grade, verified, console=console)
+        render_terminal(dataset_grade, console=console)
         if output_path:
             console.print("[dim]note: --output only writes a file with --json; ignored here.[/dim]")
 

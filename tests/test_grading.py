@@ -3,9 +3,12 @@ import numpy as np
 
 from deepen_grade.checks.base import CheckResult, Severity
 from deepen_grade.grading import (
+    CAL_NOT_ASSESSED,
+    CAL_PRESENT_UNVERIFIED,
+    CAL_STRUCTURALLY_BROKEN,
+    CALIBRATION_CHECK_ID,
     grade_dataset,
     letter_from_score,
-    passes_verification,
     score_from_results,
 )
 from deepen_grade.ingest.base import CalibrationInfo, Dataset, Episode, TopicInfo, Trajectory
@@ -65,16 +68,37 @@ def test_grade_dataset_empty():
     assert grade.episode_grades == []
 
 
-def test_passes_verification_true_for_clean_dataset():
+def test_calibration_verdict_present_unverified():
     ds = Dataset(source="test", format="lerobot", episodes=[_clean_episode("a"), _clean_episode("b")])
     grade = grade_dataset(ds)
-    assert passes_verification(grade) is True
+    assert grade.calibration_verdict == CAL_PRESENT_UNVERIFIED
+    assert "cannot verify" in grade.calibration_detail  # spells out that accuracy is unverified
 
 
-def test_passes_verification_false_when_any_fail():
+def test_calibration_verdict_not_assessed_when_no_metadata():
+    ep = _clean_episode("a")
+    ep.calibrations = []
+    ds = Dataset(source="test", format="lerobot", episodes=[ep])
+    grade = grade_dataset(ds)
+    assert grade.calibration_verdict == CAL_NOT_ASSESSED
+
+
+def test_calibration_verdict_structurally_broken():
     clean = _clean_episode("a")
     broken = _clean_episode("b")
     broken.calibrations = [CalibrationInfo(camera_id="cam0", intrinsics=None, extrinsics=None, source="x")]
     ds = Dataset(source="test", format="lerobot", episodes=[clean, broken])
     grade = grade_dataset(ds)
-    assert passes_verification(grade) is False
+    assert grade.calibration_verdict == CAL_STRUCTURALLY_BROKEN
+
+
+def test_calibration_never_moves_the_score():
+    clean = _clean_episode("a")
+    broken = _clean_episode("a")
+    broken.calibrations = [CalibrationInfo(camera_id="cam0", intrinsics=None, extrinsics=None, source="x")]
+    clean_grade = grade_dataset(Dataset(source="t", format="lerobot", episodes=[clean]))
+    broken_grade = grade_dataset(Dataset(source="t", format="lerobot", episodes=[broken]))
+    assert broken_grade.overall_score == clean_grade.overall_score
+    # ...but the breakage is still visible on the check result itself.
+    cal_results = [r for r in broken_grade.all_results() if r.check_id == CALIBRATION_CHECK_ID]
+    assert any(r.severity == Severity.FAIL for r in cal_results)

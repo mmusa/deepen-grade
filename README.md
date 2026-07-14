@@ -17,7 +17,10 @@ $ deepen grade my_episode.mcap
 │ my_episode.mcap                                    │
 │ format: mcap   episodes: 1                          │
 ╰──────────────────────────────────────────────────────╯
-Overall grade: B (82/100)
+Overall grade: B (82/100)   self-assessment -- hygiene & episode quality only
+Calibration:   NOT ASSESSED
+               no calibration metadata found anywhere in this dataset -- calibration
+               quality is unknown, not good; verification requires the deep audit
 
          Per-episode grades
 ┏━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━┓
@@ -36,7 +39,7 @@ Overall grade: B (82/100)
 │ Joint-limit saturation  │ PASS │ worst dim 'joint_3' saturated 4.2%
 │ Gripper chatter         │ PASS │ 2 direction reversals (0.31 Hz)
 │ Action-state consistency│ PASS │ consistency score 0.94
-│ Calibration sanity      │ WARN │ no camera calibration metadata found
+│ Calibration sanity      │ INFO │ NOT ASSESSED -- no camera calibration metadata found
 └──────────────────────────────────────────────────────┘
 
 ╭─ Funnel ─────────────────────────────────────────────╮
@@ -119,13 +122,23 @@ for every constant in one place. No universal numeric cutoff across every
 robot embodiment and control rate exists in the literature; these are sane
 starting points, not claims about what the cited papers themselves recommend.
 
-### C. Calibration -- sanity only, by design
+### C. Calibration -- its own verdict, never part of the grade
 deepen-grade checks that intrinsics/extrinsics are **present** and not
 **obviously broken** (missing, NaN, an untouched identity/zero default).
 That's it. It does not verify that a calibration is *geometrically correct*
 -- doing that from a recording alone (reprojection, epipolar consistency,
 drift over a session) is Deepen's patented targetless calibration
-verification, which stays sealed and server-side. See
+verification, which stays sealed and server-side.
+
+Because a well-formed but geometrically *wrong* calibration passes every
+local check, calibration is deliberately **excluded from the letter grade**
+and reported as its own top-level verdict instead:
+
+- `NOT ASSESSED` -- no calibration metadata found; quality is unknown, not good.
+- `PRESENT -- ACCURACY NOT VERIFIED` -- metadata present and structurally sound.
+- `STRUCTURALLY BROKEN` -- metadata present but obviously broken (NaN/unset default).
+
+See
 [`src/deepen_grade/checks/calibration_sanity.py`](src/deepen_grade/checks/calibration_sanity.py)
 for the firewall this module enforces on itself.
 
@@ -141,20 +154,15 @@ a marketing footer:
 
 Full sealed audit: **https://evaluate.deepen.ai**
 
-## The "Deepen Verified" badge
+## A self-assessment, not a certification
 
-A dataset that scores an overall **A or B with zero FAILs anywhere** is
-eligible for a claimable badge. `deepen grade` prints the exact markdown
-snippet in the terminal report and in `--json`'s `badge_markdown` field --
-paste it into your HuggingFace dataset card / README:
-
-```markdown
-[![Deepen Verified](https://img.shields.io/badge/Deepen-Verified-2a9d8f)](https://evaluate.deepen.ai?src=...)
-```
-
-The eligibility rule is intentionally simple and public --
-see `passes_verification()` in
-[`src/deepen_grade/grading.py`](src/deepen_grade/grading.py).
+deepen-grade runs on your machine, on your data, with nothing checked by
+Deepen -- so its report is a **self-assessment**, and it says so on its face
+(`report_type: "self-assessment"` in `--json`). There is deliberately no
+claimable "verified" badge here: a trust mark Deepen never saw would be an
+honor-system claim, which is exactly what this tool exists to replace.
+Signed, third-party attestation -- a report a counterparty can rely on --
+is the sealed deep audit at [evaluate.deepen.ai](https://evaluate.deepen.ai).
 
 ## CI: fail the data PR on a bad episode
 

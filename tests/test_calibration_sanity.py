@@ -7,10 +7,11 @@ GOOD_INTRINSICS = {"fx": 500.0, "fy": 500.0, "cx": 320.0, "cy": 240.0}
 GOOD_EXTRINSICS = [0.1, 0.2, 0.3, 0.0, 0.0, 1.57]
 
 
-def test_no_calibration_present_warns_and_funnels():
+def test_no_calibration_present_is_not_assessed_and_funnels():
     ep = Episode(episode_id="e1", calibrations=[])
     result = cs.calibration_sanity(ep)
-    assert result.severity == Severity.WARN
+    assert result.severity == Severity.INFO
+    assert "NOT ASSESSED" in result.summary
     assert "evaluate.deepen.ai" in result.details["funnel"]
 
 

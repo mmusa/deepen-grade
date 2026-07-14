@@ -9,9 +9,12 @@ from typing import Any
 
 from deepen_grade.citations import ALL_CITATIONS
 from deepen_grade.grading import DatasetGrade
-from deepen_grade.report.badge import FUNNEL_ITEMS, badge_markdown
+from deepen_grade.report.badge import FUNNEL_ITEMS, SELF_ASSESSMENT_NOTE
 
-SCHEMA_VERSION = 1
+# v2: calibration became its own top-level verdict (excluded from the score),
+# and the honor-system "verified"/"badge_markdown" fields were removed --
+# reports are explicitly local self-assessments now.
+SCHEMA_VERSION = 2
 
 
 def _result_to_dict(result) -> dict[str, Any]:
@@ -25,7 +28,7 @@ def _result_to_dict(result) -> dict[str, Any]:
     }
 
 
-def build_report(grade: DatasetGrade, verified: bool) -> dict[str, Any]:
+def build_report(grade: DatasetGrade) -> dict[str, Any]:
     used_citation_keys: set[str] = set()
     for result in grade.all_results():
         used_citation_keys.update(result.citation_keys)
@@ -46,9 +49,12 @@ def build_report(grade: DatasetGrade, verified: bool) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "tool": "deepen-grade",
+        "report_type": "self-assessment",
+        "self_assessment_note": SELF_ASSESSMENT_NOTE,
         "source": grade.source,
         "format": grade.format,
-        "overall": {"score": grade.overall_score, "grade": grade.overall_letter, "verified": verified},
+        "overall": {"score": grade.overall_score, "grade": grade.overall_letter},
+        "calibration": {"verdict": grade.calibration_verdict, "detail": grade.calibration_detail},
         "dataset_level_checks": [_result_to_dict(r) for r in grade.dataset_level_results],
         "episodes": episodes,
         "citations": {
@@ -58,5 +64,4 @@ def build_report(grade: DatasetGrade, verified: bool) -> dict[str, Any]:
         },
         "warnings": grade.warnings,
         "cannot_tell_you_locally": FUNNEL_ITEMS,
-        "badge_markdown": badge_markdown(grade.source) if verified else None,
     }
