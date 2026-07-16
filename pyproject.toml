@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deepen-grade"
-version = "0.1.0"
+version = "0.2.0"
 description = "Free, local CLI that grades robot-learning datasets (MCAP/rosbag/LeRobot) on hygiene, episode quality, and calibration sanity -- every metric traced to a named paper."
 readme = "README.md"
 license = "Apache-2.0"

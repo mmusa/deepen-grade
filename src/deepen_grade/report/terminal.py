@@ -13,8 +13,8 @@ from rich.text import Text
 
 from deepen_grade.checks.base import Severity
 from deepen_grade.citations import ALL_CITATIONS
-from deepen_grade.grading import DatasetGrade
-from deepen_grade.report.badge import badge_markdown, funnel_text
+from deepen_grade.grading import CAL_NOT_ASSESSED, CAL_PRESENT_UNVERIFIED, DatasetGrade
+from deepen_grade.report.badge import SELF_ASSESSMENT_NOTE, funnel_text
 
 SEVERITY_STYLE = {
     Severity.PASS: "green",
@@ -24,6 +24,11 @@ SEVERITY_STYLE = {
     Severity.NOT_APPLICABLE: "dim",
 }
 GRADE_STYLE = {"A": "bold green", "B": "green", "C": "yellow", "D": "bold yellow", "F": "bold red"}
+CAL_VERDICT_STYLE = {
+    CAL_NOT_ASSESSED: "bold yellow",
+    CAL_PRESENT_UNVERIFIED: "cyan",
+    # anything else (STRUCTURALLY BROKEN) renders bold red
+}
 
 # Above this many episodes, print per-check aggregates instead of a full
 # per-episode check breakdown -- keeps large-dataset output readable.
@@ -40,7 +45,7 @@ def _citation_text(citation_keys: tuple[str, ...]) -> str:
     return ", ".join(ALL_CITATIONS[k].venue for k in citation_keys if k in ALL_CITATIONS)
 
 
-def render_terminal(grade: DatasetGrade, verified: bool, console: Console | None = None) -> None:
+def render_terminal(grade: DatasetGrade, console: Console | None = None) -> None:
     # Dynamic, externally-sourced strings (dataset paths, task descriptions,
     # topic names embedded in check summaries, warnings) are passed through
     # `escape()` everywhere below before hitting a markup-parsing rich call --
@@ -56,10 +61,25 @@ def render_terminal(grade: DatasetGrade, verified: bool, console: Console | None
             title="deepen-grade report",
         )
     )
+    if grade.sampling is not None:
+        s = grade.sampling
+        seed_note = f", seed={s['seed']}" if s["mode"] == "sample" else ""
+        console.print(
+            f"[bold yellow]GRADED ON A SAMPLE[/bold yellow] ({s['n']} of {s['episodes_total']} "
+            f"episodes, mode={s['mode']}{seed_note}) -- grade letters are unaffected but coverage isn't total."
+        )
+    if grade.partial:
+        console.print("[bold yellow]PARTIAL REPORT[/bold yellow] -- grading was still in progress when this was written.")
     console.print(
         f"Overall grade: [{grade_style}]{grade.overall_letter}[/{grade_style}] "
-        f"({grade.overall_score}/100)"
-        + ("   [bold green]Deepen Verified eligible[/bold green]" if verified else "")
+        f"({grade.overall_score}/100)   [dim]self-assessment -- hygiene & episode quality only[/dim]"
+    )
+    # Calibration is a top-level verdict of its own, never part of the grade:
+    # the grade must not imply calibration accuracy it cannot see.
+    cal_style = CAL_VERDICT_STYLE.get(grade.calibration_verdict, "bold red")
+    console.print(
+        f"Calibration:   [{cal_style}]{grade.calibration_verdict}[/{cal_style}]\n"
+        f"               [dim]{escape(grade.calibration_detail)}[/dim]"
     )
 
     for w in grade.warnings:
@@ -94,13 +114,7 @@ def render_terminal(grade: DatasetGrade, verified: bool, console: Console | None
             console.print(_check_aggregate_table(grade))
 
     console.print(Panel(funnel_text(), title="Funnel", border_style="cyan"))
-
-    if verified:
-        # Text(), not a markup string: this is the literal snippet a user
-        # copies into their dataset card -- it must render byte-for-byte,
-        # not be parsed as rich markup.
-        console.print(Panel(Text(badge_markdown(grade.source)),
-                             title="Deepen Verified badge (paste into your dataset card)"))
+    console.print(Panel(Text(SELF_ASSESSMENT_NOTE), title="Self-assessment", border_style="yellow"))
 
     console.print("\nDeepen AI -- https://deepen.ai   |   Full audit: https://evaluate.deepen.ai")
 

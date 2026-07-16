@@ -1,14 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
+import json
+
 import numpy as np
 
 from deepen_grade.checks.base import CheckResult, Severity
 from deepen_grade.grading import (
+    CAL_NOT_ASSESSED,
+    CAL_PRESENT_UNVERIFIED,
+    CAL_STRUCTURALLY_BROKEN,
+    CALIBRATION_CHECK_ID,
     grade_dataset,
     letter_from_score,
-    passes_verification,
     score_from_results,
 )
 from deepen_grade.ingest.base import CalibrationInfo, Dataset, Episode, TopicInfo, Trajectory
+from deepen_grade.report.json_report import build_report
 
 
 def _result(severity):
@@ -65,16 +71,72 @@ def test_grade_dataset_empty():
     assert grade.episode_grades == []
 
 
-def test_passes_verification_true_for_clean_dataset():
+def test_calibration_verdict_present_unverified():
     ds = Dataset(source="test", format="lerobot", episodes=[_clean_episode("a"), _clean_episode("b")])
     grade = grade_dataset(ds)
-    assert passes_verification(grade) is True
+    assert grade.calibration_verdict == CAL_PRESENT_UNVERIFIED
+    assert "cannot verify" in grade.calibration_detail  # spells out that accuracy is unverified
 
 
-def test_passes_verification_false_when_any_fail():
+def test_calibration_verdict_not_assessed_when_no_metadata():
+    ep = _clean_episode("a")
+    ep.calibrations = []
+    ds = Dataset(source="test", format="lerobot", episodes=[ep])
+    grade = grade_dataset(ds)
+    assert grade.calibration_verdict == CAL_NOT_ASSESSED
+
+
+def test_calibration_verdict_structurally_broken():
     clean = _clean_episode("a")
     broken = _clean_episode("b")
     broken.calibrations = [CalibrationInfo(camera_id="cam0", intrinsics=None, extrinsics=None, source="x")]
     ds = Dataset(source="test", format="lerobot", episodes=[clean, broken])
     grade = grade_dataset(ds)
-    assert passes_verification(grade) is False
+    assert grade.calibration_verdict == CAL_STRUCTURALLY_BROKEN
+
+
+def test_calibration_never_moves_the_score():
+    clean = _clean_episode("a")
+    broken = _clean_episode("a")
+    broken.calibrations = [CalibrationInfo(camera_id="cam0", intrinsics=None, extrinsics=None, source="x")]
+    clean_grade = grade_dataset(Dataset(source="t", format="lerobot", episodes=[clean]))
+    broken_grade = grade_dataset(Dataset(source="t", format="lerobot", episodes=[broken]))
+    assert broken_grade.overall_score == clean_grade.overall_score
+    # ...but the breakage is still visible on the check result itself.
+    cal_results = [r for r in broken_grade.all_results() if r.check_id == CALIBRATION_CHECK_ID]
+    assert any(r.severity == Severity.FAIL for r in cal_results)
+
+
+# --- incremental / partial grading (feature 4) -------------------------------
+
+
+def test_on_progress_fires_every_batch_with_a_valid_partial_report():
+    """Simulates a small --json -o batch by invoking the checkpoint function
+    (grade_dataset's on_progress) directly with a tiny batch_size -- each
+    callback must already be a fully parseable, "partial": true report, since
+    that's exactly what the CLI atomically writes to disk mid-run."""
+    episodes = [_clean_episode(f"e{i}") for i in range(7)]
+    ds = Dataset(source="t", format="lerobot", episodes=episodes)
+
+    seen: list[dict] = []
+
+    def on_progress(partial_grade):
+        report = build_report(partial_grade)
+        json.dumps(report)  # must be serializable at every checkpoint
+        seen.append(report)
+
+    final = grade_dataset(ds, on_progress=on_progress, batch_size=3)
+
+    # 7 episodes, batch_size=3 -> callbacks after episode 3 and episode 6 (not 7: that's the final return).
+    assert [len(r["episodes"]) for r in seen] == [3, 6]
+    assert all(r["partial"] is True for r in seen)
+
+    final_report = build_report(final)
+    assert final_report["partial"] is False
+    assert len(final_report["episodes"]) == 7
+
+
+def test_grade_dataset_without_on_progress_never_calls_back():
+    ds = Dataset(source="t", format="lerobot", episodes=[_clean_episode("a")])
+    grade = grade_dataset(ds)  # default on_progress=None must not raise
+    assert grade.partial is False

@@ -28,6 +28,13 @@ FUNNEL_NOTE = (
     "-- run the full targetless calibration audit at evaluate.deepen.ai."
 )
 
+# Calibration is reported as its own top-level verdict and NEVER blended into
+# the letter grade (grading.py excludes this check_id from scoring): a
+# well-formed but geometrically wrong calibration passes every local check, so
+# letting this check move the score would let a badly miscalibrated dataset
+# grade well -- exactly the false confidence the grade must not sell.
+CHECK_ID = "calibration.sanity"
+
 
 def _intrinsics_issue(intrinsics: dict | None) -> str | None:
     if intrinsics is None:
@@ -71,10 +78,10 @@ def _check_one(cal: CalibrationInfo) -> list[str]:
 def calibration_sanity(episode: Episode) -> CheckResult:
     if not episode.calibrations:
         return CheckResult(
-            check_id="calibration.sanity",
+            check_id=CHECK_ID,
             name="Calibration sanity",
-            severity=Severity.WARN,
-            summary="no camera calibration metadata found for this episode",
+            severity=Severity.INFO,
+            summary="NOT ASSESSED -- no camera calibration metadata found for this episode",
             citation_keys=(SHADOW_EXTRINSICS_NOISE.key,),
             details={"cameras": [], "funnel": FUNNEL_NOTE},
         )
@@ -87,16 +94,19 @@ def calibration_sanity(episode: Episode) -> CheckResult:
 
     if flagged:
         severity = Severity.FAIL
-        summary = f"{len(flagged)}/{len(episode.calibrations)} camera(s) flagged: {', '.join(flagged)}"
+        summary = (
+            f"STRUCTURALLY BROKEN -- {len(flagged)}/{len(episode.calibrations)} "
+            f"camera(s) flagged: {', '.join(flagged)}"
+        )
     else:
         severity = Severity.PASS
         summary = (
-            f"{len(episode.calibrations)} camera(s): intrinsics/extrinsics present, "
-            "not NaN/identity/degenerate (presence check only -- not verified)"
+            f"PRESENT -- {len(episode.calibrations)} camera(s): intrinsics/extrinsics "
+            "structurally sound (presence check only -- accuracy NOT verified)"
         )
 
     return CheckResult(
-        check_id="calibration.sanity",
+        check_id=CHECK_ID,
         name="Calibration sanity",
         severity=severity,
         summary=summary,

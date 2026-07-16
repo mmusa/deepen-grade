@@ -9,9 +9,12 @@ from typing import Any
 
 from deepen_grade.citations import ALL_CITATIONS
 from deepen_grade.grading import DatasetGrade
-from deepen_grade.report.badge import FUNNEL_ITEMS, badge_markdown
+from deepen_grade.report.badge import FUNNEL_ITEMS, SELF_ASSESSMENT_NOTE
 
-SCHEMA_VERSION = 1
+# v3: added "sampling" (present iff --sample/--max-episodes trimmed the
+# episode set) and "partial" (true on an in-progress incremental write --
+# see cli.py's --json -o path).
+SCHEMA_VERSION = 3
 
 
 def _result_to_dict(result) -> dict[str, Any]:
@@ -25,7 +28,7 @@ def _result_to_dict(result) -> dict[str, Any]:
     }
 
 
-def build_report(grade: DatasetGrade, verified: bool) -> dict[str, Any]:
+def build_report(grade: DatasetGrade) -> dict[str, Any]:
     used_citation_keys: set[str] = set()
     for result in grade.all_results():
         used_citation_keys.update(result.citation_keys)
@@ -43,12 +46,16 @@ def build_report(grade: DatasetGrade, verified: bool) -> dict[str, Any]:
         for eg in grade.episode_grades
     ]
 
-    return {
+    report = {
         "schema_version": SCHEMA_VERSION,
         "tool": "deepen-grade",
+        "report_type": "self-assessment",
+        "self_assessment_note": SELF_ASSESSMENT_NOTE,
+        "partial": grade.partial,
         "source": grade.source,
         "format": grade.format,
-        "overall": {"score": grade.overall_score, "grade": grade.overall_letter, "verified": verified},
+        "overall": {"score": grade.overall_score, "grade": grade.overall_letter},
+        "calibration": {"verdict": grade.calibration_verdict, "detail": grade.calibration_detail},
         "dataset_level_checks": [_result_to_dict(r) for r in grade.dataset_level_results],
         "episodes": episodes,
         "citations": {
@@ -58,5 +65,7 @@ def build_report(grade: DatasetGrade, verified: bool) -> dict[str, Any]:
         },
         "warnings": grade.warnings,
         "cannot_tell_you_locally": FUNNEL_ITEMS,
-        "badge_markdown": badge_markdown(grade.source) if verified else None,
     }
+    if grade.sampling is not None:
+        report["sampling"] = grade.sampling
+    return report

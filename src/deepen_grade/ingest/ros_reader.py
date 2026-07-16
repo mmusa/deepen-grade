@@ -5,8 +5,8 @@
 
 Same two-pass shape as the mcap reader: a raw pass for hygiene (topic names,
 message types, per-message timestamps -- always works), and an opportunistic
-deserialize pass for JointState/Twist/TF messages that feeds the
-episode-quality and tf-tree checks.
+deserialize pass for JointState/Twist/TF/CameraInfo messages that feeds the
+episode-quality, tf-tree, and calibration-sanity checks.
 """
 
 from __future__ import annotations
@@ -18,12 +18,17 @@ import numpy as np
 from deepen_grade.ingest.base import Dataset, Episode, TfEdge, TopicInfo
 from deepen_grade.ingest.exceptions import DatasetReadError, MissingOptionalDependencyError
 from deepen_grade.ingest.ros_common import (
+    CAMERA_INFO_TYPES,
     JOINT_STATE_TYPES,
     TF_MESSAGE_TYPES,
     TWIST_TYPES,
+    build_calibrations,
+    extract_camera_info,
     extract_joint_state,
+    extract_static_transforms,
     extract_tf_edges,
     extract_twist,
+    frame_id_of,
     is_action_topic,
     series_to_trajectory,
 )
@@ -67,10 +72,12 @@ def read_ros_bag(path: str | Path, fmt: str) -> Dataset:
     gripper_series: list[tuple[float, float]] = []
     state_labels: list[str] | None = None
     tf_edges: list[TfEdge] = []
+    static_transforms: dict[str, list[float]] = {}
+    camera_intrinsics: dict[str, tuple[str | None, dict]] = {}  # topic -> (frame_id, intrinsics)
 
     try:
         with AnyReader(bag_paths) as reader:
-            decodable_types = JOINT_STATE_TYPES | TWIST_TYPES | TF_MESSAGE_TYPES
+            decodable_types = JOINT_STATE_TYPES | TWIST_TYPES | TF_MESSAGE_TYPES | CAMERA_INFO_TYPES
             for connection, timestamp, rawdata in reader.messages():
                 t = timestamp / 1e9
                 info = topics.setdefault(
@@ -105,6 +112,12 @@ def read_ros_bag(path: str | Path, fmt: str) -> Dataset:
                     is_static = "static" in connection.topic.lower()
                     for parent, child, static in extract_tf_edges(msg, is_static):
                         tf_edges.append(TfEdge(parent, child, static))
+                    if is_static:
+                        static_transforms.update(extract_static_transforms(msg))
+                elif connection.msgtype in CAMERA_INFO_TYPES and connection.topic not in camera_intrinsics:
+                    intrinsics = extract_camera_info(msg)  # first message per topic is enough
+                    if intrinsics is not None:
+                        camera_intrinsics[connection.topic] = (frame_id_of(msg), intrinsics)
     except FileNotFoundError as exc:
         raise DatasetReadError(f"{path}: {exc}") from exc
 
@@ -128,6 +141,7 @@ def read_ros_bag(path: str | Path, fmt: str) -> Dataset:
             "sensors/video, not joint state."
         )
     trajectory = series_to_trajectory(state_series, state_labels, action_series, gripper_series)
+    calibrations = build_calibrations(camera_intrinsics, static_transforms)
 
     all_stamps = np.concatenate([t.timestamps_s for t in topic_infos])
     duration = float(all_stamps.max() - all_stamps.min()) if len(all_stamps) else None
@@ -137,7 +151,7 @@ def read_ros_bag(path: str | Path, fmt: str) -> Dataset:
         topics=topic_infos,
         tf_edges=tf_edges or None,
         trajectory=trajectory,
-        calibrations=[],
+        calibrations=calibrations,
         duration_s=duration,
     )
     ds = Dataset(source=str(path), format=fmt, episodes=[episode])

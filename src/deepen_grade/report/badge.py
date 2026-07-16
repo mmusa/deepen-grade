@@ -1,11 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 """The funnel: what deepen-grade deliberately can't tell you locally, and the
-claimable "Deepen Verified" badge for datasets that pass.
+self-assessment framing for what it *can*.
+
+There is deliberately no "Deepen Verified" badge here. deepen-grade runs on
+your machine, on your data, with nothing checked by Deepen -- so its output is
+a SELF-ASSESSMENT, and a trust mark Deepen never saw would be an honor-system
+claim. Signed, third-party attestation exists only as the sealed deep audit.
 """
 
 from __future__ import annotations
 
 EVALUATE_URL = "https://evaluate.deepen.ai"
+
+SELF_ASSESSMENT_NOTE = (
+    "This is a local SELF-ASSESSMENT: it was produced on your machine and is "
+    "not reviewed, signed, or attested by Deepen. Do not present it as a "
+    "Deepen verification. For a signed, third-party acceptance audit, see "
+    f"{EVALUATE_URL}."
+)
 
 FUNNEL_ITEMS: list[str] = [
     "Whether camera calibration is geometrically CORRECT, not just present -- "
@@ -23,16 +35,4 @@ def funnel_text() -> str:
         "What this can't tell you locally:\n"
         + "\n".join(lines)
         + f"\n\nRun the full sealed audit: {EVALUATE_URL}"
-    )
-
-
-def badge_markdown(dataset_source: str) -> str:
-    """Markdown snippet a dataset author can paste into their HuggingFace
-    dataset card / README after a passing `deepen grade` run."""
-    return (
-        f"[![Deepen Verified](https://img.shields.io/badge/Deepen-Verified-2a9d8f)]"
-        f"({EVALUATE_URL}?src={dataset_source})\n\n"
-        "Graded with [deepen-grade](https://github.com/deepen-ai/deepen-grade) -- "
-        "hygiene, episode quality, and calibration sanity, every metric cited to a "
-        f"published source. For a full calibration-verified acceptance audit, see {EVALUATE_URL}."
     )

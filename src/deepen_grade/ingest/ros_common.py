@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from deepen_grade.ingest.base import Trajectory
+from deepen_grade.ingest.base import CalibrationInfo, Trajectory
 
 # Message types (short name, ROS1 and ROS2 spellings) that carry joint-level
 # proprioceptive state or commanded action. Topic *name* heuristics further
@@ -33,6 +33,10 @@ TF_MESSAGE_TYPES = {
     "tf2_msgs/TFMessage",
     "tf2_msgs/msg/TFMessage",
     "tf/tfMessage",
+}
+CAMERA_INFO_TYPES = {
+    "sensor_msgs/CameraInfo",
+    "sensor_msgs/msg/CameraInfo",
 }
 
 ACTION_NAME_HINTS = ("cmd", "command", "target", "setpoint", "desired")
@@ -92,6 +96,85 @@ def extract_twist(msg: Any) -> np.ndarray | None:
     return np.array(
         [linear.x, linear.y, linear.z, angular.x, angular.y, angular.z], dtype=float
     )
+
+
+def frame_id_of(msg: Any) -> str | None:
+    """The `header.frame_id` of a decoded message, if it carries one."""
+    header = getattr(msg, "header", None)
+    frame_id = getattr(header, "frame_id", None) if header is not None else None
+    return str(frame_id) if frame_id else None
+
+
+def extract_camera_info(msg: Any) -> dict | None:
+    """Pull {fx,fy,cx,cy,width,height} out of a decoded CameraInfo.
+
+    `k` is the row-major 3x3 intrinsic matrix (ROS field name is lowercase in
+    ROS2, uppercase `K` in ROS1 message text but both decoders normalize
+    attribute access to the field name as written in the schema -- try both):
+    fx=k[0], fy=k[4], cx=k[2], cy=k[5].
+    """
+    k = getattr(msg, "k", None)
+    if k is None:
+        k = getattr(msg, "K", None)
+    if k is None:
+        return None
+    k = np.asarray(k, dtype=float)
+    if k.size != 9:
+        return None
+    width, height = getattr(msg, "width", None), getattr(msg, "height", None)
+    return {
+        "fx": float(k[0]), "fy": float(k[4]), "cx": float(k[2]), "cy": float(k[5]),
+        "width": int(width) if width else None,
+        "height": int(height) if height else None,
+    }
+
+
+def extract_static_transforms(msg: Any) -> dict[str, list[float]]:
+    """Map child_frame_id -> [tx,ty,tz,qx,qy,qz,qw] for every transform in a
+    (presumed /tf_static) TFMessage.
+
+    Used to pair a camera's extrinsics with its frame_id when CameraInfo
+    itself carries no extrinsics slot (it never does -- that's normal ROS).
+    Never invents a transform that wasn't actually published; a camera frame
+    absent here just means extrinsics stays None (see calibration_sanity.py:
+    "do NOT invent identity").
+    """
+    result: dict[str, list[float]] = {}
+    for transform in getattr(msg, "transforms", None) or []:
+        child = getattr(transform, "child_frame_id", None)
+        tf = getattr(transform, "transform", None)
+        if not child or tf is None:
+            continue
+        translation, rotation = getattr(tf, "translation", None), getattr(tf, "rotation", None)
+        if translation is None or rotation is None:
+            continue
+        result[str(child)] = [
+            float(translation.x), float(translation.y), float(translation.z),
+            float(rotation.x), float(rotation.y), float(rotation.z), float(rotation.w),
+        ]
+    return result
+
+
+def build_calibrations(
+    camera_intrinsics: dict[str, tuple[str | None, dict]], static_transforms: dict[str, list[float]]
+) -> list[CalibrationInfo]:
+    """Pair each camera's intrinsics (topic -> (frame_id, intrinsics)) with its
+    /tf_static extrinsics by frame_id. Shared by the mcap and ROS1/ROS2 bag
+    readers so the pairing logic lives in exactly one place.
+
+    A camera whose frame_id has no matching /tf_static entry still gets a
+    CalibrationInfo with extrinsics=None -- calibration_sanity already reports
+    that correctly as "extrinsics missing", never a fabricated identity.
+    """
+    calibrations = []
+    for topic, (frame_id, intrinsics) in camera_intrinsics.items():
+        camera_id = frame_id or topic
+        extrinsics = static_transforms.get(frame_id) if frame_id else None
+        calibrations.append(
+            CalibrationInfo(camera_id=camera_id, intrinsics=intrinsics, extrinsics=extrinsics,
+                             source="camera_info")
+        )
+    return calibrations
 
 
 def extract_tf_edges(msg: Any, is_static: bool) -> list[tuple[str, str, bool]]:
