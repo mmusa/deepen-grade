@@ -74,23 +74,20 @@ def _normalized_speed(pos: np.ndarray, dt: float) -> np.ndarray:
 
 def _longest_run_frac(mask: np.ndarray, min_run: int) -> tuple[float, int]:
     """Fraction of True samples that belong to a run of length >= min_run, and
-    the longest run length."""
+    the longest run length.
+
+    Vectorized run-length encoding (edges via np.diff) instead of a per-sample
+    Python loop: this is called once per episode for idle/stall and once per
+    *state dimension* for joint-limit saturation, so an O(n) Python loop here
+    multiplies badly across a large episode count (see README perf note).
+    """
     if not mask.any():
         return 0.0, 0
-    covered = 0
-    longest = 0
-    run = 0
-    for v in mask:
-        if v:
-            run += 1
-        else:
-            if run >= min_run:
-                covered += run
-            longest = max(longest, run)
-            run = 0
-    if run >= min_run:
-        covered += run
-    longest = max(longest, run)
+    padded = np.concatenate(([False], mask, [False]))
+    edges = np.flatnonzero(np.diff(padded.astype(np.int8)))
+    run_lengths = edges[1::2] - edges[0::2]  # [start, end) pairs -> lengths
+    longest = int(run_lengths.max())
+    covered = int(run_lengths[run_lengths >= min_run].sum())
     return covered / len(mask), longest
 
 
@@ -248,15 +245,16 @@ def gripper_chatter(trajectory: Trajectory) -> CheckResult:
 
     # Peak local rate over a sliding window, not the whole-episode average --
     # a short chatter burst in an otherwise-smooth episode must not get
-    # diluted into invisibility by the episode's total duration.
+    # diluted into invisibility by the episode's total duration. Vectorized
+    # via searchsorted (reversal_times is sorted): for window start t0 =
+    # reversal_times[i], the count in [t0, t0+WINDOW) is the insertion index
+    # of t0+WINDOW minus i -- avoids an O(reversals^2) Python double loop.
     if total_reversals == 0:
         peak_rate_hz = 0.0
     else:
-        counts = [
-            int(np.sum((reversal_times >= t0) & (reversal_times < t0 + CHATTER_WINDOW_S)))
-            for t0 in reversal_times
-        ]
-        peak_rate_hz = max(counts) / CHATTER_WINDOW_S
+        window_end_idx = np.searchsorted(reversal_times, reversal_times + CHATTER_WINDOW_S, side="left")
+        counts = window_end_idx - np.arange(len(reversal_times))
+        peak_rate_hz = counts.max() / CHATTER_WINDOW_S
 
     if peak_rate_hz >= CHATTER_FAIL_HZ:
         severity = Severity.FAIL

@@ -17,7 +17,13 @@ import numpy as np
 # modality for cross-modal timestamp-skew analysis. Order matters: first match
 # wins. This is a coarse, transparent heuristic (documented in the README), not
 # a learned or proprietary classifier.
+#
+# "calibration" is checked before "vision" on purpose: a `*/camera_info` topic
+# name also matches the vision bucket's "camera" keyword, but CameraInfo is
+# calibration metadata (checked by calibration_sanity), not a sensing stream --
+# it must never feed cross-modal sync-skew analysis alongside /image_raw.
 _MODALITY_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("calibration", ("camera_info", "camerainfo", "cam_info")),
     ("lidar", ("lidar", "points", "pointcloud", "scan", "velodyne", "ouster")),
     ("vision", ("image", "camera", "cam", "rgb", "depth", "video")),
     ("proprioception", ("joint", "state", "odom", "imu", "gripper", "wrench", "force")),
@@ -103,3 +109,7 @@ class Dataset:
     format: str  # "mcap" | "ros1_bag" | "ros2_db3" | "lerobot"
     episodes: list[Episode]
     warnings: list[str] = field(default_factory=list)
+    # Set by the reader when --sample/--max-episodes discarded episodes before
+    # grading: {"mode": "sample"|"head", "n": int, "seed": int|None, "episodes_total": int}.
+    # None means every episode the source has was graded.
+    sampling: dict | None = None

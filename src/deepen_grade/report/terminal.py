@@ -61,6 +61,15 @@ def render_terminal(grade: DatasetGrade, console: Console | None = None) -> None
             title="deepen-grade report",
         )
     )
+    if grade.sampling is not None:
+        s = grade.sampling
+        seed_note = f", seed={s['seed']}" if s["mode"] == "sample" else ""
+        console.print(
+            f"[bold yellow]GRADED ON A SAMPLE[/bold yellow] ({s['n']} of {s['episodes_total']} "
+            f"episodes, mode={s['mode']}{seed_note}) -- grade letters are unaffected but coverage isn't total."
+        )
+    if grade.partial:
+        console.print("[bold yellow]PARTIAL REPORT[/bold yellow] -- grading was still in progress when this was written.")
     console.print(
         f"Overall grade: [{grade_style}]{grade.overall_letter}[/{grade_style}] "
         f"({grade.overall_score}/100)   [dim]self-assessment -- hygiene & episode quality only[/dim]"

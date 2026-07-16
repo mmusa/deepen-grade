@@ -38,9 +38,14 @@ def detect_format(path_or_repo_id: str) -> str:
             return "lerobot"
         if (p / "metadata.yaml").exists():
             return "ros2_db3"
+        from deepen_grade.ingest.lerobot_reader import looks_like_lerobot_container
+
+        if looks_like_lerobot_container(p):
+            return "lerobot"
         raise UnsupportedFormatError(
             f"{path_or_repo_id}: directory doesn't look like a LeRobot dataset "
-            "(no meta/info.json or data/) or a ROS2 bag directory (no metadata.yaml)."
+            "(no meta/info.json or data/), a container of nested LeRobot datasets, "
+            "or a ROS2 bag directory (no metadata.yaml)."
         )
 
     # Not an existing local path at all -- only a HuggingFace repo-id is valid here.
@@ -55,8 +60,22 @@ def detect_format(path_or_repo_id: str) -> str:
     )
 
 
-def load_dataset(path_or_repo_id: str, fmt: str | None = None, cache_dir: str | None = None) -> Dataset:
-    """Load and normalize a dataset. Auto-detects format unless `fmt` is given."""
+def load_dataset(
+    path_or_repo_id: str,
+    fmt: str | None = None,
+    cache_dir: str | None = None,
+    subdataset: str | None = None,
+    sample: int | None = None,
+    seed: int = 0,
+    max_episodes: int | None = None,
+    hf_token: str | None = None,
+) -> Dataset:
+    """Load and normalize a dataset. Auto-detects format unless `fmt` is given.
+
+    `subdataset`/`sample`/`seed`/`max_episodes`/`hf_token` are LeRobot-only
+    concepts (container repos, corpus-scale sampling, HF auth) and are
+    ignored for the other formats.
+    """
     fmt = fmt or detect_format(path_or_repo_id)
 
     if fmt == "mcap":
@@ -74,6 +93,9 @@ def load_dataset(path_or_repo_id: str, fmt: str | None = None, cache_dir: str | 
     if fmt == "lerobot":
         from deepen_grade.ingest.lerobot_reader import read_lerobot
 
-        return read_lerobot(path_or_repo_id, cache_dir=cache_dir)
+        return read_lerobot(
+            path_or_repo_id, cache_dir=cache_dir, subdataset=subdataset, sample=sample,
+            seed=seed, max_episodes=max_episodes, hf_token=hf_token,
+        )
 
     raise UnsupportedFormatError(f"Unknown format {fmt!r}")

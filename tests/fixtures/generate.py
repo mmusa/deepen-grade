@@ -19,6 +19,45 @@ from scenario import JOINT_LABELS, build_scenario
 DATA_DIR = Path(__file__).parent / "data"
 T0_NS = 1_700_000_000_000_000_000
 
+# Concatenated ros2msg definitions (mcap_ros2's dynamic decoder parses these
+# the same way genpy.dynamic parses ROS1's "====="-separated text) for the
+# CameraInfo + tf_static calibration-carrier fixture -- see feature 7's
+# extraction in ingest/ros_common.py.
+CAMERA_INFO_MSGDEF = (
+    "std_msgs/Header header\n"
+    "float64[9] k\n"
+    "================================================================================\n"
+    "MSG: std_msgs/Header\n"
+    "builtin_interfaces/Time stamp\n"
+    "string frame_id\n"
+)
+TF_MSGDEF = (
+    "geometry_msgs/TransformStamped[] transforms\n"
+    "================================================================================\n"
+    "MSG: geometry_msgs/TransformStamped\n"
+    "std_msgs/Header header\n"
+    "string child_frame_id\n"
+    "geometry_msgs/Transform transform\n"
+    "================================================================================\n"
+    "MSG: std_msgs/Header\n"
+    "builtin_interfaces/Time stamp\n"
+    "string frame_id\n"
+    "================================================================================\n"
+    "MSG: geometry_msgs/Transform\n"
+    "geometry_msgs/Vector3 translation\n"
+    "geometry_msgs/Quaternion rotation\n"
+    "================================================================================\n"
+    "MSG: geometry_msgs/Vector3\n"
+    "float64 x\nfloat64 y\nfloat64 z\n"
+    "================================================================================\n"
+    "MSG: geometry_msgs/Quaternion\n"
+    "float64 x\nfloat64 y\nfloat64 z\nfloat64 w\n"
+)
+# Known-good values the calibration-extraction tests assert against.
+CAMERA_FRAME_ID = "camera_link"
+CAMERA_K = [500.0, 0.0, 320.0, 0.0, 500.0, 240.0, 0.0, 0.0, 1.0]
+CAMERA_EXTRINSICS = [0.1, 0.2, 0.3, 0.0, 0.0, 0.0, 1.0]  # [tx,ty,tz,qx,qy,qz,qw]
+
 
 def write_mcap(path: Path) -> None:
     from mcap_ros2.writer import Writer as McapWriter
@@ -31,6 +70,8 @@ def write_mcap(path: Path) -> None:
             "string[] name\nfloat64[] position\nfloat64[] velocity\nfloat64[] effort\n",
         )
         img_schema = writer.register_msgdef("sensor_msgs/msg/CompressedImage", "uint8[] data\n")
+        camera_info_schema = writer.register_msgdef("sensor_msgs/msg/CameraInfo", CAMERA_INFO_MSGDEF)
+        tf_schema = writer.register_msgdef("tf2_msgs/msg/TFMessage", TF_MSGDEF)
 
         for i, t in enumerate(sc.t):
             writer.write_message(
@@ -54,6 +95,30 @@ def write_mcap(path: Path) -> None:
         for t in sc.camera_t[::2]:  # ~10Hz camera vs 20Hz control loop
             writer.write_message("/camera/image_raw", img_schema, {"data": [0, 1, 2]},
                                   log_time=int(T0_NS + t * 1e9))
+
+        # Calibration carriers: one CameraInfo message (real /camera_info
+        # topics are effectively constant per-session, so "first message is
+        # enough" -- see ingest/ros_common.py) and a matching /tf_static
+        # transform for the same frame_id.
+        writer.write_message(
+            "/camera/camera_info", camera_info_schema,
+            {"header": {"stamp": {"sec": 0, "nanosec": 0}, "frame_id": CAMERA_FRAME_ID}, "k": CAMERA_K},
+            log_time=T0_NS,
+        )
+        writer.write_message(
+            "/tf_static", tf_schema,
+            {"transforms": [{
+                "header": {"stamp": {"sec": 0, "nanosec": 0}, "frame_id": "base_link"},
+                "child_frame_id": CAMERA_FRAME_ID,
+                "transform": {
+                    "translation": {"x": CAMERA_EXTRINSICS[0], "y": CAMERA_EXTRINSICS[1],
+                                     "z": CAMERA_EXTRINSICS[2]},
+                    "rotation": {"x": CAMERA_EXTRINSICS[3], "y": CAMERA_EXTRINSICS[4],
+                                  "z": CAMERA_EXTRINSICS[5], "w": CAMERA_EXTRINSICS[6]},
+                },
+            }]},
+            log_time=T0_NS,
+        )
         writer.finish()
 
 

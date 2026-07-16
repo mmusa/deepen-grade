@@ -11,10 +11,10 @@ from deepen_grade.citations import ALL_CITATIONS
 from deepen_grade.grading import DatasetGrade
 from deepen_grade.report.badge import FUNNEL_ITEMS, SELF_ASSESSMENT_NOTE
 
-# v2: calibration became its own top-level verdict (excluded from the score),
-# and the honor-system "verified"/"badge_markdown" fields were removed --
-# reports are explicitly local self-assessments now.
-SCHEMA_VERSION = 2
+# v3: added "sampling" (present iff --sample/--max-episodes trimmed the
+# episode set) and "partial" (true on an in-progress incremental write --
+# see cli.py's --json -o path).
+SCHEMA_VERSION = 3
 
 
 def _result_to_dict(result) -> dict[str, Any]:
@@ -46,11 +46,12 @@ def build_report(grade: DatasetGrade) -> dict[str, Any]:
         for eg in grade.episode_grades
     ]
 
-    return {
+    report = {
         "schema_version": SCHEMA_VERSION,
         "tool": "deepen-grade",
         "report_type": "self-assessment",
         "self_assessment_note": SELF_ASSESSMENT_NOTE,
+        "partial": grade.partial,
         "source": grade.source,
         "format": grade.format,
         "overall": {"score": grade.overall_score, "grade": grade.overall_letter},
@@ -65,3 +66,6 @@ def build_report(grade: DatasetGrade) -> dict[str, Any]:
         "warnings": grade.warnings,
         "cannot_tell_you_locally": FUNNEL_ITEMS,
     }
+    if grade.sampling is not None:
+        report["sampling"] = grade.sampling
+    return report

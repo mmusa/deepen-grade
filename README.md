@@ -93,7 +93,58 @@ deepen grade some-org/some-dataset        # HuggingFace repo-id (downloaded, no 
 deepen grade my_episode.mcap --json                 # machine-readable, for CI
 deepen grade my_episode.mcap --json -o report.json
 deepen grade my_episode.mcap --min-grade B          # exit 1 if grade < B (CI gate)
+
+deepen grade some-org/big-dataset --sample 200 --seed 0    # grade a random 200-episode sample
+deepen grade some-org/big-dataset --max-episodes 200       # grade the first 200 episodes
+deepen grade some-org/container-repo --subdataset team_a/session1   # grade one nested dataset only
+deepen grade some-org/gated-dataset --hf-token hf_xxx       # or just set HF_TOKEN
+deepen grade my_episode.mcap --quiet                        # no HF progress bars, no CLI chatter
 ```
+
+### Container repos: datasets nested inside a repo
+
+Some Hub repos aren't a single LeRobot dataset at the root -- they nest one or
+more complete LeRobot datasets one or two directories down (a
+per-contributor directory, an `ImitationLearning/` wrapper, etc). `deepen
+grade` detects this automatically (no `meta/info.json` at the root, but one
+exists one or two levels down) and grades every nested dataset together,
+prefixing each episode ID with its sub-dataset's relative path
+(`team_a/session1::episode_000042`). A warning in the report lists every
+sub-dataset found. Use `--subdataset <relpath>` to grade just one of them --
+that behaves identically to grading it as a standalone dataset.
+
+### Sampling large corpora: `--sample` / `--max-episodes`
+
+Some Hub repos have 100k+ episodes; downloading and reading the whole thing
+can OOM a laptop or blow a CI time budget long before grading starts.
+`--sample N` grades a uniform random sample of N episodes (seeded via
+`--seed`, default `0`, so the same command always picks the same episodes);
+`--max-episodes N` grades the first N episodes in natural order instead.
+Either way, only the parquet files that actually contain a selected episode
+are ever read -- episodes are always materialized one file at a time, never
+concatenated into one corpus-sized DataFrame, so peak memory is bounded by
+the largest single file, not the corpus. A `"sampling"` block appears in the
+JSON report (`{"mode": "sample"|"head", "n", "seed", "episodes_total"}`) and
+the terminal report prints a `GRADED ON A SAMPLE` banner; grade letters
+themselves are unaffected.
+
+### Partial reports: `--json -o` writes incrementally
+
+With `--json -o report.json`, the report is written to disk incrementally --
+roughly every 200 graded episodes, not just at the end -- via a write-to-temp-
+file-then-rename so the file on disk is always a complete, parseable JSON
+document, never a half-written one. An in-progress write has `"partial":
+true`; the final write sets it to `false`. This means a crash or CI timeout
+mid-run still leaves a valid, gradeable-so-far report behind instead of
+nothing.
+
+### HuggingFace downloads: retries and rate limits
+
+Repo-id downloads retry up to 3 times with exponential backoff on a dropped
+connection or other transient Hub error. An HTTP 429 (rate limited) fails
+immediately with an actionable message instead of retrying into the same
+wall: anonymous downloads have a lower rate limit than authenticated ones, so
+pass `--hf-token` (or set `HF_TOKEN`) to raise it.
 
 ## What it checks (and what each check cites)
 
@@ -141,6 +192,25 @@ and reported as its own top-level verdict instead:
 See
 [`src/deepen_grade/checks/calibration_sanity.py`](src/deepen_grade/checks/calibration_sanity.py)
 for the firewall this module enforces on itself.
+
+Calibration metadata itself is read from whatever the source format actually
+carries: for `.mcap`/`.bag`/`.db3`, from a `sensor_msgs/CameraInfo` message on
+each camera topic (intrinsics) paired with a matching `/tf_static` transform
+by frame_id (extrinsics, left `None` -- never invented -- if no matching
+transform was published); for LeRobot, from the `meta/calibration.json`
+sidecar convention or (narrowly) a DROID-style `meta/cam2base_extrinsics.json`
+/ `meta/info.json["calibration"]` block.
+
+### D. Plausibility -- does this even look like robot data?
+A structurally valid LeRobot/mcap/bag file can still contain something that
+isn't robot-learning data at all -- a non-robotics dataset reshaped to fit the
+schema, for instance. `Robot-data plausibility` is a cheap, dataset-level
+heuristic check that flags this: no state/action trajectory anywhere, a state
+that never actually changes across any episode, or no usable timestamps.
+It's always `INFO` (or `N/A` when nothing looks wrong), never affects the
+score, and is deliberately **uncited** -- "does this look like robot data" is
+not a metric any of the papers above define. See
+[`src/deepen_grade/checks/plausibility.py`](src/deepen_grade/checks/plausibility.py).
 
 ## What this can't tell you locally
 

@@ -19,15 +19,20 @@ from pathlib import Path
 
 import numpy as np
 
-from deepen_grade.ingest.base import Dataset, Episode, TfEdge, TopicInfo, Trajectory
+from deepen_grade.ingest.base import CalibrationInfo, Dataset, Episode, TfEdge, TopicInfo, Trajectory
 from deepen_grade.ingest.exceptions import DatasetReadError, MissingOptionalDependencyError
 from deepen_grade.ingest.ros_common import (
+    CAMERA_INFO_TYPES,
     JOINT_STATE_TYPES,
     TF_MESSAGE_TYPES,
     TWIST_TYPES,
+    build_calibrations,
+    extract_camera_info,
     extract_joint_state,
+    extract_static_transforms,
     extract_tf_edges,
     extract_twist,
+    frame_id_of,
     is_action_topic,
     series_to_trajectory,
 )
@@ -71,7 +76,7 @@ def read_mcap(path: str | Path) -> Dataset:
         for name, info in topics.items()
     ]
 
-    trajectory, tf_edges, warnings = _decode_semantics(path, topics.keys())
+    trajectory, tf_edges, calibrations, warnings = _decode_semantics(path, topics.keys())
 
     all_stamps = np.concatenate([t.timestamps_s for t in topic_infos])
     duration = float(all_stamps.max() - all_stamps.min()) if len(all_stamps) else None
@@ -81,19 +86,22 @@ def read_mcap(path: str | Path) -> Dataset:
         topics=topic_infos,
         tf_edges=tf_edges,
         trajectory=trajectory,
-        calibrations=[],  # mcap carries no standardized calibration slot; sanity check
-        duration_s=duration,  # will report "not present" for raw mcap inputs.
+        calibrations=calibrations,
+        duration_s=duration,
     )
     ds = Dataset(source=str(path), format="mcap", episodes=[episode])
     ds.warnings.extend(warnings)
     return ds
 
 
-def _decode_semantics(path: Path, topic_names) -> tuple[Trajectory | None, list[TfEdge] | None, list[str]]:
-    """Best-effort decode of JointState/Twist/TF from ros2msg-encoded channels.
+def _decode_semantics(
+    path: Path, topic_names
+) -> tuple[Trajectory | None, list[TfEdge] | None, list[CalibrationInfo], list[str]]:
+    """Best-effort decode of JointState/Twist/TF/CameraInfo from ros2msg-encoded channels.
 
-    Returns (trajectory_or_None, tf_edges_or_None, warnings). Never raises --
-    any failure here degrades to "episode-quality checks skipped", not a crash.
+    Returns (trajectory_or_None, tf_edges_or_None, calibrations, warnings). Never
+    raises -- any failure here degrades to "episode-quality checks skipped", not
+    a crash.
     """
     warnings: list[str] = []
     try:
@@ -104,13 +112,15 @@ def _decode_semantics(path: Path, topic_names) -> tuple[Trajectory | None, list[
             "skipped for this mcap file (hygiene checks still ran). "
             'Install with `pip install "deepen-grade[mcap]"`.'
         )
-        return None, None, warnings
+        return None, None, [], warnings
 
     state_series: list[tuple[float, np.ndarray]] = []
     action_series: list[tuple[float, np.ndarray]] = []
     gripper_series: list[tuple[float, float]] = []
     state_labels: list[str] | None = None
     tf_edges: list[TfEdge] = []
+    static_transforms: dict[str, list[float]] = {}
+    camera_intrinsics: dict[str, tuple[str | None, dict]] = {}  # topic -> (frame_id, intrinsics)
     saw_decodable = False
 
     try:
@@ -144,10 +154,18 @@ def _decode_semantics(path: Path, topic_names) -> tuple[Trajectory | None, list[
                     is_static = "static" in channel.topic.lower()
                     for parent, child, static in extract_tf_edges(ros_msg, is_static):
                         tf_edges.append(TfEdge(parent, child, static))
+                    if is_static:
+                        static_transforms.update(extract_static_transforms(ros_msg))
+                elif schema.name in CAMERA_INFO_TYPES and channel.topic not in camera_intrinsics:
+                    intrinsics = extract_camera_info(ros_msg)  # first message per topic is enough
+                    if intrinsics is not None:
+                        camera_intrinsics[channel.topic] = (frame_id_of(ros_msg), intrinsics)
     except Exception as exc:  # noqa: BLE001 -- decode is opportunistic, never fatal
         warnings.append(f"mcap decode pass failed ({exc.__class__.__name__}: {exc}); "
                          "falling back to hygiene-only results.")
-        return None, (tf_edges or None), warnings
+        return None, (tf_edges or None), [], warnings
+
+    calibrations = build_calibrations(camera_intrinsics, static_transforms)
 
     if not saw_decodable:
         warnings.append(
@@ -155,7 +173,7 @@ def _decode_semantics(path: Path, topic_names) -> tuple[Trajectory | None, list[
             "file: episode-quality checks skipped. This is expected for non-ROS2msg "
             "encodings (e.g. protobuf/json) or datasets that don't publish JointState."
         )
-        return None, (tf_edges or None), warnings
+        return None, (tf_edges or None), calibrations, warnings
 
     trajectory = series_to_trajectory(state_series, state_labels, action_series, gripper_series)
-    return trajectory, (tf_edges or None), warnings
+    return trajectory, (tf_edges or None), calibrations, warnings

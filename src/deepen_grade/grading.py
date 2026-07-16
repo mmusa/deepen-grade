@@ -8,13 +8,20 @@ a grade by hand.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
 
-from deepen_grade.checks import calibration_sanity, episode_quality, hygiene
+from deepen_grade.checks import calibration_sanity, episode_quality, hygiene, plausibility
 from deepen_grade.checks.base import CheckResult, Severity
 from deepen_grade.ingest.base import Dataset, Episode
+
+# After this many episodes are graded, an in-progress DatasetGrade is handed
+# to `on_progress` (if given) so the caller can flush a partial report to disk
+# -- a crash/timeout mid-run must still leave something readable behind
+# instead of the zero-output-after-25-minutes failure this was built for.
+PROGRESS_BATCH_SIZE = 200
 
 SEVERITY_PENALTY: dict[Severity, int] = {
     Severity.PASS: 0,
@@ -77,6 +84,8 @@ class DatasetGrade:
     warnings: list[str] = field(default_factory=list)
     calibration_verdict: str = CAL_NOT_ASSESSED
     calibration_detail: str = ""
+    sampling: dict | None = None  # see Dataset.sampling
+    partial: bool = False  # True on an in-progress report handed to on_progress
 
     def all_results(self) -> list[CheckResult]:
         return self.dataset_level_results + [r for eg in self.episode_grades for r in eg.results]
@@ -123,10 +132,9 @@ def grade_episode(episode: Episode) -> EpisodeGrade:
     )
 
 
-def grade_dataset(dataset: Dataset) -> DatasetGrade:
-    episode_grades = [grade_episode(ep) for ep in dataset.episodes]
-    dataset_results = hygiene.run_dataset_checks(dataset)
-
+def _assemble_grade(
+    dataset: Dataset, episode_grades: list[EpisodeGrade], dataset_results: list[CheckResult], partial: bool
+) -> DatasetGrade:
     base_score = int(round(np.mean([g.score for g in episode_grades]))) if episode_grades else 0
     overall_score = max(0, base_score - score_penalty(dataset_results))
     verdict, detail = calibration_verdict(episode_grades)
@@ -134,11 +142,38 @@ def grade_dataset(dataset: Dataset) -> DatasetGrade:
     return DatasetGrade(
         source=dataset.source,
         format=dataset.format,
-        episode_grades=episode_grades,
+        episode_grades=list(episode_grades),
         dataset_level_results=dataset_results,
         overall_score=overall_score,
         overall_letter=letter_from_score(overall_score),
         warnings=list(dataset.warnings),
         calibration_verdict=verdict,
         calibration_detail=detail,
+        sampling=dataset.sampling,
+        partial=partial,
     )
+
+
+def grade_dataset(
+    dataset: Dataset,
+    on_progress: Callable[[DatasetGrade], None] | None = None,
+    batch_size: int = PROGRESS_BATCH_SIZE,
+) -> DatasetGrade:
+    """Grade every episode plus the dataset-level checks.
+
+    `on_progress`, if given, is called with an in-progress (`partial=True`)
+    DatasetGrade after every `batch_size` episodes -- the CLI's `--json -o`
+    incremental-write path uses this to flush a valid report to disk
+    periodically instead of only at the end. Dataset-level checks (schema/dim
+    consistency, plausibility) only need `dataset.episodes`' metadata, which
+    is already fully materialized by the time grading starts, so they run
+    once up front and are included in every progress callback too.
+    """
+    dataset_results = hygiene.run_dataset_checks(dataset) + plausibility.run_checks(dataset)
+    episode_grades: list[EpisodeGrade] = []
+    for i, ep in enumerate(dataset.episodes, start=1):
+        episode_grades.append(grade_episode(ep))
+        if on_progress is not None and i % batch_size == 0 and i < len(dataset.episodes):
+            on_progress(_assemble_grade(dataset, episode_grades, dataset_results, partial=True))
+
+    return _assemble_grade(dataset, episode_grades, dataset_results, partial=False)
