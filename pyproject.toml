@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "deepen-grade"
-version = "0.2.0"
+version = "0.2.1"
 description = "Free, local CLI that grades robot-learning datasets (MCAP/rosbag/LeRobot) on hygiene, episode quality, and calibration sanity -- every metric traced to a named paper."
 readme = "README.md"
 license = "Apache-2.0"
@@ -71,11 +71,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/deepen-ai/deepen-grade"
-Repository = "https://github.com/deepen-ai/deepen-grade"
-Issues = "https://github.com/deepen-ai/deepen-grade/issues"
+Homepage = "https://github.com/mmusa/deepen-grade"
+Repository = "https://github.com/mmusa/deepen-grade"
+Issues = "https://github.com/mmusa/deepen-grade/issues"
 "Deepen AI" = "https://deepen.ai"
-"Full Audit" = "https://evaluate.deepen.ai"
+"Full Audit" = "https://deepen-robograde.pages.dev"
 
 [project.scripts]
 deepen = "deepen_grade.cli:main"

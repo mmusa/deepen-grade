@@ -10,7 +10,7 @@ claim. Signed, third-party attestation exists only as the sealed deep audit.
 
 from __future__ import annotations
 
-EVALUATE_URL = "https://evaluate.deepen.ai"
+EVALUATE_URL = "https://deepen-robograde.pages.dev"
 
 SELF_ASSESSMENT_NOTE = (
     "This is a local SELF-ASSESSMENT: it was produced on your machine and is "

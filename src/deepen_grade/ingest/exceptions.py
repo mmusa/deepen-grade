@@ -14,7 +14,7 @@ class MissingOptionalDependencyError(RuntimeError):
         message = (
             f"Reading {feature} requires the optional '{extra}' extra "
             f"({pkgs}), which isn't installed.\n\n"
-            f'    pip install "deepen-grade[{extra}] @ git+https://github.com/mmusa/deepen-grade"\n'
+            f'    pip install "deepen-grade[{extra}]"\n'
         )
         super().__init__(message)
         self.feature = feature

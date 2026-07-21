@@ -110,7 +110,7 @@ def _decode_semantics(
         warnings.append(
             "mcap-ros2-support not installed: episode-quality and tf-tree checks "
             "skipped for this mcap file (hygiene checks still ran). "
-            'Install with `pip install "deepen-grade[mcap] @ git+https://github.com/mmusa/deepen-grade"`.'
+            'Install with `pip install "deepen-grade[mcap]"`.'
         )
         return None, None, [], warnings
 

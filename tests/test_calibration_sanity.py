@@ -12,7 +12,7 @@ def test_no_calibration_present_is_not_assessed_and_funnels():
     result = cs.calibration_sanity(ep)
     assert result.severity == Severity.INFO
     assert "NOT ASSESSED" in result.summary
-    assert "evaluate.deepen.ai" in result.details["funnel"]
+    assert "deepen-robograde.pages.dev" in result.details["funnel"]
 
 
 def test_valid_calibration_passes():

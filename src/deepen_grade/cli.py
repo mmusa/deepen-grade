@@ -51,7 +51,7 @@ def main() -> None:
 @click.option("--quiet", is_flag=True,
               help="Suppress HF download progress bars and CLI chatter that isn't part of the report.")
 @click.option("--share-report", "share", is_flag=True,
-              help="Opt-in: would POST the report to evaluate.deepen.ai. Not implemented yet in this release "
+              help="Opt-in: would POST the report to deepen-robograde.pages.dev. Not implemented yet in this release "
                    "(see --share-report-dry-run) -- nothing uploads by default.")
 @click.option("--share-report-dry-run", "share_dry_run_path", type=click.Path(), default=None,
               help="With --share-report: write the payload that would be sent to this local file instead of failing bare.")

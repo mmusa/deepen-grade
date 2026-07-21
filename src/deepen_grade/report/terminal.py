@@ -116,7 +116,7 @@ def render_terminal(grade: DatasetGrade, console: Console | None = None) -> None
     console.print(Panel(funnel_text(), title="Funnel", border_style="cyan"))
     console.print(Panel(Text(SELF_ASSESSMENT_NOTE), title="Self-assessment", border_style="yellow"))
 
-    console.print("\nDeepen AI -- https://deepen.ai   |   Full audit: https://evaluate.deepen.ai")
+    console.print("\nDeepen AI -- https://deepen.ai   |   Full audit: https://deepen-robograde.pages.dev")
 
 
 def _episode_detail_table(eg) -> Table:

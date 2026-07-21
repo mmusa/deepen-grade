@@ -8,7 +8,7 @@ locally"): this module checks whether intrinsics/extrinsics are *present* and
 It does **not** verify that a calibration is geometrically correct. Doing that
 from a recording alone (reprojection/epipolar/triangulation analysis, drift
 detection over a session) is Deepen's patented targetless calibration
-verification -- sealed, server-side, offered at evaluate.deepen.ai. Nothing in
+verification -- sealed, server-side, offered at deepen-robograde.pages.dev. Nothing in
 this file should ever grow toward that; if you're tempted to add a residual,
 an epipolar distance, or anything that opens a video frame, stop -- that
 belongs in the paid audit, not here.
@@ -25,7 +25,7 @@ from deepen_grade.ingest.base import CalibrationInfo, Episode
 FUNNEL_NOTE = (
     "deepen-grade only checks that calibration is present and not obviously "
     "broken. It cannot tell you whether the numbers are geometrically correct "
-    "-- run the full targetless calibration audit at evaluate.deepen.ai."
+    "-- run the full targetless calibration audit at deepen-robograde.pages.dev."
 )
 
 # Calibration is reported as its own top-level verdict and NEVER blended into
