@@ -20,7 +20,7 @@ def _console_output(grade: DatasetGrade) -> str:
 def test_dataset_warning_with_brackets_survives_rendering():
     grade = DatasetGrade(
         source="some/repo[mcap]", format="mcap", episode_grades=[],
-        warnings=['install with `pip install "deepen-grade[mcap]"`'],
+        warnings=['install with `pip install "deepen-grade[mcap] @ git+https://github.com/mmusa/deepen-grade"`'],
     )
     output = _console_output(grade)
     assert "deepen-grade[mcap]" in output

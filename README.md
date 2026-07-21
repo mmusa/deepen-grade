@@ -62,12 +62,14 @@ Deepen AI -- https://deepen.ai   |   Full audit: https://evaluate.deepen.ai
 The base install is deliberately light (numpy, click, rich -- no torch, no
 ROS). Add the extra(s) for the formats you actually use:
 
+Not on PyPI yet -- install from GitHub:
+
 ```bash
-pip install deepen-grade                    # base: no format readers yet
-pip install "deepen-grade[mcap]"             # .mcap (ROS 2 default)
-pip install "deepen-grade[ros]"              # .bag (ROS 1) / .db3 (ROS 2 sqlite)
-pip install "deepen-grade[lerobot]"          # LeRobot local path or HF repo-id
-pip install "deepen-grade[all]"              # everything
+pip install "deepen-grade @ git+https://github.com/mmusa/deepen-grade"           # base: no format readers yet
+pip install "deepen-grade[mcap] @ git+https://github.com/mmusa/deepen-grade"     # .mcap (ROS 2 default)
+pip install "deepen-grade[ros] @ git+https://github.com/mmusa/deepen-grade"      # .bag (ROS 1) / .db3 (ROS 2 sqlite)
+pip install "deepen-grade[lerobot] @ git+https://github.com/mmusa/deepen-grade"  # LeRobot local path or HF repo-id
+pip install "deepen-grade[all] @ git+https://github.com/mmusa/deepen-grade"      # everything
 ```
 
 `[ros]` uses the pure-Python [`rosbags`](https://pypi.org/project/rosbags/)
