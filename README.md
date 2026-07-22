@@ -30,17 +30,20 @@ Calibration:   NOT ASSESSED
 └─────────────┴───────┴───────┴──────┘
 
            Checks -- my_episode
-┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━┳...
-│ Topic frequency & drops │ PASS │ 4 topics, no drops detected
-│ Cross-modal sync skew   │ WARN │ max skew 28.4ms exceeds 15ms budget
-│ tf-tree integrity       │ PASS │ 6 frames, single-parent tree
-│ Idle / stall detection  │ PASS │ 3.1% of episode idle
-│ LDJ smoothness          │ PASS │ LDJ = -14.2
-│ Joint-limit saturation  │ PASS │ worst dim 'joint_3' saturated 4.2%
-│ Gripper chatter         │ PASS │ 2 direction reversals (0.31 Hz)
-│ Action-state consistency│ N/A  │ action-space semantics undeclared
-│ Calibration sanity      │ INFO │ NOT ASSESSED -- no camera calibration metadata found
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━┳...
+│ Check                   ┃ Res. ┃ Claim        ┃ Summary
+│ Topic frequency & drops │ PASS │ DEFECT       │ 4 topics, no drops detected
+│ Cross-modal sync skew   │ WARN │ risk         │ max skew 28.4ms exceeds 15ms budget
+│ tf-tree integrity       │ PASS │ DEFECT       │ 6 frames, single-parent tree
+│ Idle / stall detection  │ PASS │ risk         │ 3.1% of episode idle
+│ LDJ smoothness          │ PASS │ risk         │ LDJ = -14.2
+│ Joint-limit saturation  │ PASS │ risk         │ worst dim 'joint_3' saturated 4.2%
+│ Gripper chatter         │ PASS │ risk         │ 2 direction reversals (0.31 Hz)
+│ Action-state consistency│ N/A  │ not assessed │ action-space semantics undeclared
+│ Calibration sanity      │ INFO │ not assessed │ NOT ASSESSED -- no camera calibration metadata found
 └──────────────────────────────────────────────────────┘
+   Claim column: only DEFECT rows can move "Overall grade" above -- risk/
+   characteristic/not assessed/by design never do (see training_value).
 
     Training-value profile (RISK -- never graded)
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━┓
@@ -272,6 +275,30 @@ density-derived score instead of a WARN/FAIL penalty sum.
 Calibration keeps its own separate top-level verdict, unaffected by any of
 this -- see section C above.
 
+**The NOT ASSESSED floor.** An empty gradable set must never auto-pass
+(GRADING_TAXONOMY_V1.md section 3). If a dataset is small or sparse enough
+that every DEFECT-eligible check individually abstains -- no topics with
+enough messages for topic frequency, no tf concept, fewer than 2 episodes to
+compare schemas across -- `defect_classes` comes back with no gradable
+entries anywhere, and the dataset's letter is the string `"NOT ASSESSED"`
+(not a letter band, not a 0-100 score's worth of confidence) instead of the
+vacuous 100/A that a bare `max(density, default=0.0)` would otherwise hand
+back. The report's `warnings` names every gate that didn't hold. A dataset
+where DEFECT checks actually RAN and PASSED -- even trivially, even with
+degenerate/garbage content -- is unaffected: real gradable evidence (density
+0.0 included) always earns its letter; only genuine silence triggers this.
+`--min-grade` treats `NOT ASSESSED` as failing any requested bar, including
+`F`, since "couldn't be graded at all" must never read as "cleared the bar."
+
+**Content-plausibility flag.** `plausibility.robot_data` (section D above) is
+an index-curation gate, not a letter input -- but a confident-looking grade
+must never silently coexist with "this doesn't look like robot-learning
+data." When it fires, both `--json` (`content_plausibility: {"flagged",
+"detail"}`, top-level, next to `overall`) and the terminal report (a
+`CONTENT PLAUSIBILITY FLAG` line directly under `Overall grade`) surface it
+prominently rather than leaving it to be found only in the dataset-level
+checks table.
+
 **Two checks were fixed as part of this rewrite** (both confirmed on a
 50k+-episode BridgeData2 run before the fix):
 - `action_state_consistency` used to hard-FAIL any dataset whose action
@@ -294,10 +321,18 @@ this -- see section C above.
   is no declared-joint-limits field in this codebase yet, so this is always
   a proxy, never a DEFECT.
 
-**`--json` report additions (schema_version 4):** `grade_schema`,
-`defect_classes` (the density behind `overall`, per DEFECT check_id), and
-`training_value` (RISK-class severity counts, per check_id). Nothing
-existing was removed or renamed.
+**Terminal styling.** Per-check tables carry a `Claim` column (`DEFECT` /
+`risk` / `characteristic` / `not assessed` / `by design`), styled distinctly
+from the PASS/WARN/FAIL `Result` column, with a footnote reiterating that
+only `DEFECT` rows can move the letter above -- a RISK-class FAIL sitting
+right under an `A` grade must never read as if it caused that grade.
+
+**`--json` report additions (schema_version 5):** `grade_schema`,
+`defect_classes` (the density behind `overall`, per DEFECT check_id),
+`training_value` (RISK-class severity counts, per check_id), and
+`content_plausibility` (`{"flagged", "detail"}`). Nothing existing was
+removed or renamed. `overall.grade` can now also be the string
+`"NOT ASSESSED"` (see the floor, above).
 
 **A note on comparability:** grades produced under `grade_schema` earlier
 than `1.0.0` are not comparable to grades under `1.0.0` -- the method changed,

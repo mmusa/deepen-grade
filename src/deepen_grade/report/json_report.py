@@ -23,7 +23,14 @@ from deepen_grade.report.badge import FUNNEL_ITEMS, SELF_ASSESSMENT_NOTE
 # reading only "overall"/"episodes"/"checks" still work unchanged -- nothing
 # existing was removed or renamed, which is what keeps this schema bump
 # backward-comprehensible rather than a breaking rewrite.
-SCHEMA_VERSION = 4
+# v5: "overall.grade" can now be the string "NOT ASSESSED" (grading.py's
+# LETTER_NOT_ASSESSED) when no DEFECT-class check produced a single gradable
+# finding anywhere -- an empty gradable set must never silently read as a
+# perfect grade (GRADING_TAXONOMY_V1.md section 3). Added top-level
+# "content_plausibility" ({"flagged", "detail"}), surfaced next to "overall"
+# rather than buried in "dataset_level_checks": a confident-looking grade must
+# never silently coexist with "this doesn't look like robot-learning data."
+SCHEMA_VERSION = 5
 
 
 def _result_to_dict(result) -> dict[str, Any]:
@@ -68,6 +75,7 @@ def build_report(grade: DatasetGrade) -> dict[str, Any]:
         "overall": {"score": grade.overall_score, "grade": grade.overall_letter},
         "defect_classes": grade.defect_classes,
         "training_value": grade.training_value,
+        "content_plausibility": {"flagged": grade.plausibility_flagged, "detail": grade.plausibility_detail},
         "calibration": {"verdict": grade.calibration_verdict, "detail": grade.calibration_detail},
         "dataset_level_checks": [_result_to_dict(r) for r in grade.dataset_level_results],
         "episodes": episodes,

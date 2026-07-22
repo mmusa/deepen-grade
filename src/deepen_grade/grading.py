@@ -72,6 +72,15 @@ CAL_NOT_ASSESSED = "NOT ASSESSED"
 CAL_PRESENT_UNVERIFIED = "PRESENT -- ACCURACY NOT VERIFIED"
 CAL_STRUCTURALLY_BROKEN = "STRUCTURALLY BROKEN"
 
+# The letter when NO DEFECT-class check produced even one gradable finding
+# anywhere in the dataset -- see `_assemble_grade`'s floor. Deliberately not a
+# GRADE_BANDS entry: it must never rank alongside A-F (an "empty gradable set"
+# is a different kind of outcome than "graded and clean," per
+# GRADING_TAXONOMY_V1.md section 3 -- "never auto-passes... never auto-fails").
+LETTER_NOT_ASSESSED = "NOT ASSESSED"
+
+PLAUSIBILITY_CHECK_ID = plausibility.CHECK_ID
+
 
 def score_penalty(results: list[CheckResult]) -> int:
     """Fixed-point WARN/FAIL penalty, DEFECT-class findings only. Used for the
@@ -123,6 +132,29 @@ def _defect_density_by_check(results: list[CheckResult]) -> dict[str, dict]:
     return by_check
 
 
+def _score_from_defect_classes(by_check: dict[str, dict]) -> int:
+    """`100 * (1 - worst_density)`, rounded and clamped to [0, 100] -- the
+    arithmetic behind `integrity_score`, factored out so `_assemble_grade` can
+    reuse the SAME `by_check` dict it already needs for the report's
+    `defect_classes` field instead of recomputing it from scratch.
+    """
+    worst_density = max((c["density"] for c in by_check.values()), default=0.0)
+    return max(0, min(100, round(100 * (1 - worst_density))))
+
+
+def _has_defect_evidence(by_check: dict[str, dict]) -> bool:
+    """True iff at least one DEFECT-class check produced at least one gradable
+    (non-N/A) finding SOMEWHERE in the dataset. False is the "empty gradable
+    set" case `_assemble_grade`'s NOT_ASSESSED floor exists for: every DEFECT
+    check individually abstained (no topics to measure frequency on, no tf
+    concept, fewer than 2 episodes to compare schemas across, ...), so
+    `_defect_density_by_check` never even created an entry for them --
+    `integrity_score` would otherwise read that silence as "nothing failed"
+    and hand back a perfect, unearned 100.
+    """
+    return any(entry["gradable"] > 0 for entry in by_check.values())
+
+
 def integrity_score(results: list[CheckResult]) -> int:
     """The dataset's letter-grade input: DEFECT-only, worst-class-bounded
     defect density (Deepen convention v1, GRADING_TAXONOMY_V1.md section 4.3).
@@ -146,10 +178,50 @@ def integrity_score(results: list[CheckResult]) -> int:
     RISK/CHARACTERISTIC/BY_DESIGN/NOT_ASSESSED findings never enter this
     function's inputs (filtered by claim_type in `_defect_density_by_check`),
     so no non-DEFECT finding can move this number by construction.
+
+    NOTE: this returns a plain 0-100 number even when NO DEFECT check ever
+    produced gradable evidence at all (density then defaults to 0.0 => 100).
+    `_assemble_grade` is what actually issues the letter, and it checks
+    `_has_defect_evidence` FIRST and overrides to `LETTER_NOT_ASSESSED` before
+    ever consulting this score for that case -- see its docstring.
     """
-    by_check = _defect_density_by_check(results)
-    worst_density = max((c["density"] for c in by_check.values()), default=0.0)
-    return max(0, min(100, round(100 * (1 - worst_density))))
+    return _score_from_defect_classes(_defect_density_by_check(results))
+
+
+def _not_assessed_floor_warning(results: list[CheckResult]) -> str:
+    """Explains the NOT_ASSESSED letter by naming every gate that didn't hold
+    (Law 1: "Couldn't measure," "measured fine," and "measured bad" are three
+    different outputs -- silence must never be reported as a number). Lists
+    every NOT_ASSESSED finding's check_id and its own summary, deduplicated,
+    not just the DEFECT-eligible ones -- a reader trying to understand "why
+    can't this be graded" benefits from the full picture (missing tf concept,
+    too few episodes, no topics to measure a rate on, ...), not a subset.
+    """
+    reasons: dict[str, str] = {}
+    for r in results:
+        if r.claim_type == ClaimType.NOT_ASSESSED and r.check_id not in reasons:
+            reasons[r.check_id] = r.summary
+    gate_list = "; ".join(f"{check_id} ({summary})" for check_id, summary in sorted(reasons.items()))
+    return (
+        "NOT ASSESSED: no DEFECT-class check produced a single gradable finding anywhere "
+        "in this dataset, so no letter grade can be issued -- an empty gradable set must "
+        "never auto-pass (GRADING_TAXONOMY_V1.md section 3). "
+        f"Gates that did not hold: {gate_list or '(none named)'}."
+    )
+
+
+def _plausibility_flag(dataset_results: list[CheckResult]) -> tuple[bool, str | None]:
+    """Whether `plausibility.robot_data` fired on this dataset, and its
+    summary. Surfaced as its own top-level field (report + terminal), not left
+    buried in the dataset-level checks table: GRADING_TAXONOMY_V1.md's class F
+    treats this as an index-curation gate ("does this even look like robot
+    data"), and a confident-looking letter grade must never silently coexist
+    with "this doesn't look like robot-learning data" -- see `_assemble_grade`.
+    """
+    for r in dataset_results:
+        if r.check_id == PLAUSIBILITY_CHECK_ID and r.severity == Severity.INFO:
+            return True, r.summary
+    return False, None
 
 
 def _training_value_profile(results: list[CheckResult]) -> dict[str, dict]:
@@ -197,6 +269,8 @@ class DatasetGrade:
     grade_schema: str = GRADE_SCHEMA
     defect_classes: dict = field(default_factory=dict)  # per DEFECT check_id: see _defect_density_by_check
     training_value: dict = field(default_factory=dict)  # per RISK check_id: see _training_value_profile
+    plausibility_flagged: bool = False  # see _plausibility_flag
+    plausibility_detail: str | None = None
 
     def all_results(self) -> list[CheckResult]:
         return self.dataset_level_results + [r for eg in self.episode_grades for r in eg.results]
@@ -247,14 +321,29 @@ def _assemble_grade(
     dataset: Dataset, episode_grades: list[EpisodeGrade], dataset_results: list[CheckResult], partial: bool
 ) -> DatasetGrade:
     all_results = dataset_results + [r for eg in episode_grades for r in eg.results]
-    # Zero episodes means zero DEFECT-eligible findings anywhere -- `integrity_score`
-    # would read that as "nothing failed" and hand back a perfect 100. That's the
-    # empty-gradable-set trap from the other direction (GRADING_TAXONOMY_V1.md
-    # section 3): an empty set must not auto-pass any more than it auto-fails. A
-    # dataset with NO episodes at all is graded, deliberately, not abstained --
-    # there is nothing here to certify, so the honest answer is F/0, not A/100.
-    overall_score = integrity_score(all_results) if episode_grades else 0
+    defect_classes = _defect_density_by_check(all_results)
+
+    # The NOT_ASSESSED floor (GRADING_TAXONOMY_V1.md section 3: "an empty
+    # gradable set never auto-passes"). This is NOT "no episodes" specifically
+    # -- it's the general case where every DEFECT-class check individually
+    # abstained (no topics to measure a rate on, no tf concept, fewer than 2
+    # episodes to compare schemas across, ...), so `defect_classes` came back
+    # with no gradable entries anywhere. `_score_from_defect_classes` would
+    # silently read that as "nothing failed" (density 0.0 => 100). A clean
+    # dataset whose DEFECT checks actually RAN and PASSED is untouched by this
+    # -- `_has_defect_evidence` is true the moment even one check produced a
+    # single gradable finding, gradable=1/density=0.0 included.
+    if _has_defect_evidence(defect_classes):
+        overall_score = _score_from_defect_classes(defect_classes)
+        overall_letter = letter_from_score(overall_score)
+        warnings = list(dataset.warnings)
+    else:
+        overall_score = 0
+        overall_letter = LETTER_NOT_ASSESSED
+        warnings = [*dataset.warnings, _not_assessed_floor_warning(all_results)]
+
     verdict, detail = calibration_verdict(episode_grades)
+    plausibility_flagged, plausibility_detail = _plausibility_flag(dataset_results)
 
     return DatasetGrade(
         source=dataset.source,
@@ -262,14 +351,16 @@ def _assemble_grade(
         episode_grades=list(episode_grades),
         dataset_level_results=dataset_results,
         overall_score=overall_score,
-        overall_letter=letter_from_score(overall_score),
-        warnings=list(dataset.warnings),
+        overall_letter=overall_letter,
+        warnings=warnings,
         calibration_verdict=verdict,
         calibration_detail=detail,
         sampling=dataset.sampling,
         partial=partial,
-        defect_classes=_defect_density_by_check(all_results),
+        defect_classes=defect_classes,
         training_value=_training_value_profile(all_results),
+        plausibility_flagged=plausibility_flagged,
+        plausibility_detail=plausibility_detail,
     )
 
 

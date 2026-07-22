@@ -47,3 +47,34 @@ def test_check_summary_with_brackets_survives_rendering():
     grade = DatasetGrade(source="test", format="lerobot", episode_grades=[eg])
     output = _console_output(grade)
     assert "topic [weird/name] flagged" in output
+
+
+# --- QA finding 2: RISK findings must be visually distinct from DEFECT ones --
+
+
+def test_risk_fail_is_labeled_distinctly_from_defect_fail():
+    """A RISK-class FAIL (e.g. gripper chatter) sitting right under "Overall
+    grade: A" must be visibly marked as non-letter-affecting -- a reader
+    scanning the table must be able to tell it apart from a DEFECT FAIL that
+    actually earned that grade."""
+    defect_fail = CheckResult(check_id="d", name="Defect check", severity=Severity.FAIL,
+                               summary="s", citation_keys=("rep105",), claim_type=ClaimType.DEFECT)
+    risk_fail = CheckResult(check_id="r", name="Risk check", severity=Severity.FAIL,
+                             summary="s", citation_keys=("rep105",), claim_type=ClaimType.RISK)
+    eg = EpisodeGrade(episode_id="e1", score=88, letter="B", results=[defect_fail, risk_fail])
+    grade = DatasetGrade(source="test", format="lerobot", episode_grades=[eg])
+    output = _console_output(grade)
+    assert "defect" in output.lower()
+    assert "risk" in output.lower()
+    # A footnote spelling out that only DEFECT rows move the letter.
+    assert "only defect" in output.lower() or "never do" in output.lower()
+
+
+def test_content_plausibility_flag_prints_prominently_next_to_grade():
+    grade = DatasetGrade(
+        source="garbage", format="lerobot", episode_grades=[],
+        plausibility_flagged=True, plausibility_detail="state values never change across any sampled episode",
+    )
+    output = _console_output(grade)
+    assert "CONTENT PLAUSIBILITY FLAG" in output
+    assert "state values never change" in output

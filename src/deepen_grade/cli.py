@@ -109,8 +109,14 @@ def grade(source, fmt, as_json, output_path, min_grade, cache_dir, subdataset, s
         if output_path and not quiet:
             console.print("[dim]note: --output only writes a file with --json; ignored here.[/dim]")
 
-    if min_grade is not None and _LETTER_RANK[dataset_grade.overall_letter] > _LETTER_RANK[min_grade]:
-        sys.exit(1)
+    if min_grade is not None:
+        # NOT ASSESSED (no DEFECT check ever produced gradable evidence, see
+        # grading.py's floor) isn't in _LETTER_RANK -- it can't be compared
+        # against a requested bar, and "we couldn't grade this at all" must
+        # never read as "clears any bar you asked for." Fail the gate.
+        letter = dataset_grade.overall_letter
+        if letter not in _LETTER_RANK or _LETTER_RANK[letter] > _LETTER_RANK[min_grade]:
+            sys.exit(1)
     sys.exit(0)
 
 

@@ -11,9 +11,9 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from deepen_grade.checks.base import Severity
+from deepen_grade.checks.base import ClaimType, Severity
 from deepen_grade.citations import ALL_CITATIONS
-from deepen_grade.grading import CAL_NOT_ASSESSED, CAL_PRESENT_UNVERIFIED, DatasetGrade
+from deepen_grade.grading import CAL_NOT_ASSESSED, CAL_PRESENT_UNVERIFIED, LETTER_NOT_ASSESSED, DatasetGrade
 from deepen_grade.report.badge import SELF_ASSESSMENT_NOTE, funnel_text
 
 SEVERITY_STYLE = {
@@ -23,12 +23,38 @@ SEVERITY_STYLE = {
     Severity.FAIL: "bold red",
     Severity.NOT_APPLICABLE: "dim",
 }
-GRADE_STYLE = {"A": "bold green", "B": "green", "C": "yellow", "D": "bold yellow", "F": "bold red"}
+GRADE_STYLE = {
+    "A": "bold green", "B": "green", "C": "yellow", "D": "bold yellow", "F": "bold red",
+    LETTER_NOT_ASSESSED: "bold yellow",
+}
 CAL_VERDICT_STYLE = {
     CAL_NOT_ASSESSED: "bold yellow",
     CAL_PRESENT_UNVERIFIED: "cyan",
     # anything else (STRUCTURALLY BROKEN) renders bold red
 }
+
+# Claim-type marker shown on every check row (Result column's neighbor) so a
+# RISK/CHARACTERISTIC/NOT-ASSESSED FAIL or WARN is never visually confused
+# with a letter-moving DEFECT one -- only DEFECT rows can affect "Overall
+# grade" above the table (see grading.py's `integrity_score`).
+CLAIM_TYPE_LABEL = {
+    ClaimType.DEFECT: "DEFECT",
+    ClaimType.RISK: "risk",
+    ClaimType.CHARACTERISTIC: "characteristic",
+    ClaimType.BY_DESIGN: "by design",
+    ClaimType.NOT_ASSESSED: "not assessed",
+}
+CLAIM_TYPE_STYLE = {
+    ClaimType.DEFECT: "bold",
+    ClaimType.RISK: "cyan",
+    ClaimType.CHARACTERISTIC: "blue",
+    ClaimType.BY_DESIGN: "green",
+    ClaimType.NOT_ASSESSED: "dim",
+}
+CLAIM_TYPE_FOOTNOTE = (
+    "Claim column: only DEFECT rows can move \"Overall grade\" above -- "
+    "risk/characteristic/not assessed/by design never do (see training_value)."
+)
 
 # Above this many episodes, print per-check aggregates instead of a full
 # per-episode check breakdown -- keeps large-dataset output readable.
@@ -37,6 +63,11 @@ MAX_EPISODES_FOR_DETAIL = 15
 
 def _severity_text(severity: Severity) -> str:
     return f"[{SEVERITY_STYLE[severity]}]{severity.value.upper()}[/{SEVERITY_STYLE[severity]}]"
+
+
+def _claim_type_text(claim_type: ClaimType) -> str:
+    style = CLAIM_TYPE_STYLE[claim_type]
+    return f"[{style}]{CLAIM_TYPE_LABEL[claim_type]}[/{style}]"
 
 
 def _citation_text(citation_keys: tuple[str, ...]) -> str:
@@ -75,6 +106,14 @@ def render_terminal(grade: DatasetGrade, console: Console | None = None) -> None
         f"({grade.overall_score}/100)   [dim]grade_schema {escape(grade.grade_schema)} -- "
         "DEFECT-class findings only, see training_value below[/dim]"
     )
+    # Content-plausibility is an index-curation gate (GRADING_TAXONOMY_V1.md
+    # class F), never folded into the letter -- but it must never silently
+    # coexist with a confident-looking grade either, so it prints directly
+    # under "Overall grade," not buried in the dataset-level checks table.
+    if grade.plausibility_flagged:
+        console.print(
+            f"[bold magenta]CONTENT PLAUSIBILITY FLAG:[/bold magenta] {escape(grade.plausibility_detail or '')}"
+        )
     # Calibration is a top-level verdict of its own, never part of the grade:
     # the grade must not imply calibration accuracy it cannot see.
     cal_style = CAL_VERDICT_STYLE.get(grade.calibration_verdict, "bold red")
@@ -87,13 +126,15 @@ def render_terminal(grade: DatasetGrade, console: Console | None = None) -> None
         console.print(f"[yellow]warning:[/yellow] {escape(w)}")
 
     if grade.dataset_level_results:
-        table = Table(title="Dataset-level checks", show_lines=False)
+        table = Table(title="Dataset-level checks", caption=CLAIM_TYPE_FOOTNOTE, show_lines=False)
         table.add_column("Check")
         table.add_column("Result")
+        table.add_column("Claim")
         table.add_column("Summary")
         table.add_column("Citation")
         for r in grade.dataset_level_results:
-            table.add_row(r.name, _severity_text(r.severity), escape(r.summary), _citation_text(r.citation_keys))
+            table.add_row(r.name, _severity_text(r.severity), _claim_type_text(r.claim_type),
+                          escape(r.summary), _citation_text(r.citation_keys))
         console.print(table)
 
     ep_table = Table(title="Per-episode grades")
@@ -124,13 +165,15 @@ def render_terminal(grade: DatasetGrade, console: Console | None = None) -> None
 
 
 def _episode_detail_table(eg) -> Table:
-    table = Table(title=f"Checks -- {escape(eg.episode_id)}")
+    table = Table(title=f"Checks -- {escape(eg.episode_id)}", caption=CLAIM_TYPE_FOOTNOTE)
     table.add_column("Check")
     table.add_column("Result")
+    table.add_column("Claim")
     table.add_column("Summary")
     table.add_column("Citation")
     for r in eg.results:
-        table.add_row(r.name, _severity_text(r.severity), escape(r.summary), _citation_text(r.citation_keys))
+        table.add_row(r.name, _severity_text(r.severity), _claim_type_text(r.claim_type),
+                      escape(r.summary), _citation_text(r.citation_keys))
     return table
 
 
@@ -160,20 +203,28 @@ def _training_value_table(training_value: dict) -> Table:
 def _check_aggregate_table(grade: DatasetGrade) -> Table:
     counts: dict[str, Counter] = {}
     names: dict[str, str] = {}
+    claim_types: dict[str, set] = {}
     for eg in grade.episode_grades:
         for r in eg.results:
             counts.setdefault(r.check_id, Counter())[r.severity] += 1
             names[r.check_id] = r.name
+            claim_types.setdefault(r.check_id, set()).add(r.claim_type)
 
-    table = Table(title=f"Check aggregate across {len(grade.episode_grades)} episodes")
+    table = Table(title=f"Check aggregate across {len(grade.episode_grades)} episodes", caption=CLAIM_TYPE_FOOTNOTE)
     table.add_column("Check")
+    table.add_column("Claim")
     table.add_column("Pass")
     table.add_column("Warn")
     table.add_column("Fail")
     table.add_column("N/A")
     for check_id, c in counts.items():
+        # A check_id's claim_type is usually singular, but action_state_consistency
+        # can be CHARACTERISTIC/NOT_ASSESSED/RISK depending on the episode -- show
+        # every one seen rather than picking an arbitrary representative.
+        claim_text = "/".join(_claim_type_text(ct) for ct in sorted(claim_types[check_id], key=lambda ct: ct.value))
         table.add_row(
             names[check_id],
+            claim_text,
             str(c[Severity.PASS]),
             f"[yellow]{c[Severity.WARN]}[/yellow]" if c[Severity.WARN] else "0",
             f"[bold red]{c[Severity.FAIL]}[/bold red]" if c[Severity.FAIL] else "0",

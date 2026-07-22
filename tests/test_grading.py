@@ -10,6 +10,7 @@ from deepen_grade.grading import (
     CAL_STRUCTURALLY_BROKEN,
     CALIBRATION_CHECK_ID,
     GRADE_SCHEMA,
+    LETTER_NOT_ASSESSED,
     grade_dataset,
     integrity_score,
     letter_from_score,
@@ -71,6 +72,10 @@ def test_grade_dataset_empty():
     ds = Dataset(source="test", format="lerobot", episodes=[])
     grade = grade_dataset(ds)
     assert grade.overall_score == 0
+    # Zero episodes is a special case of the NOT_ASSESSED floor (no DEFECT
+    # check ever ran), not a graded F -- an empty gradable set must not
+    # auto-fail any more than it auto-passes (QA finding 1).
+    assert grade.overall_letter == LETTER_NOT_ASSESSED
     assert grade.episode_grades == []
 
 
@@ -108,6 +113,102 @@ def test_calibration_never_moves_the_score():
     # ...but the breakage is still visible on the check result itself.
     cal_results = [r for r in broken_grade.all_results() if r.check_id == CALIBRATION_CHECK_ID]
     assert any(r.severity == Severity.FAIL for r in cal_results)
+
+
+# --- NOT_ASSESSED floor (QA finding 1: "vacuous A") --------------------------
+#
+# Root cause: topic_frequency_and_drops and tf_tree_integrity each abstain
+# (claim_type NOT_ASSESSED) when their own preconditions aren't met -- no
+# topics with enough messages, no tf concept -- and schema_and_dim_consistency
+# abstains below 2 episodes. `_defect_density_by_check` filters NOT_ASSESSED
+# results out entirely (never even creates a gradable=0 entry for them), so
+# when EVERY DEFECT-eligible check abstains for a given dataset, `defect_classes`
+# comes back completely empty and `_score_from_defect_classes`' `max(...,
+# default=0.0)` silently reads that as "nothing failed" -> 100/A. This is
+# distinct from a check running and PASSING (a real gradable=1, density=0.0
+# entry) -- that's clean evidence and must still earn its A.
+
+
+def _garbage_single_episode_dataset(episode_id: str) -> Dataset:
+    """A single well-formed-but-content-garbage episode: valid, monotonic
+    timestamps and a real (dead-constant) state array, but no `topics` and no
+    `tf_edges` -- exactly the shape this repo's own plausibility tests build
+    when they only need to exercise the trajectory surface. A single-episode
+    Dataset is also exactly what every real .mcap/.bag file becomes (see
+    ingest/mcap_reader.py, ingest/ros_common.py), so this is not a contrived
+    shape -- it's what "grade one recording at a time" looks like for real.
+    """
+    n = 50
+    t = np.arange(n) * 0.02
+    garbage_state = np.zeros((n, 3))  # dead-constant -- not real robot data
+    traj = Trajectory(timestamps_s=t, state=garbage_state, state_labels=None,
+                       action=None, action_labels=None, gripper_position=None)
+    ep = Episode(episode_id=episode_id, trajectory=traj)
+    return Dataset(source=f"garbage/{episode_id}", format="lerobot", episodes=[ep])
+
+
+def test_garbage_vacuous_dataset_is_not_assessed():
+    ds = _garbage_single_episode_dataset("garbage_0")
+    grade = grade_dataset(ds)
+    assert grade.defect_classes == {}
+    assert grade.overall_letter == LETTER_NOT_ASSESSED
+    assert grade.overall_score == 0
+    assert grade.plausibility_flagged is True
+    assert "never change" in grade.plausibility_detail
+    # The report must say WHY, not just issue a bare non-letter.
+    assert any("NOT ASSESSED" in w and "gates that did not hold" in w.lower() for w in grade.warnings)
+
+
+def test_qa_repro_exactly_five_garbage_episodes_each_not_assessed():
+    """The literal QA finding 1 repro: 5 well-formed episodes of dead-constant
+    garbage state, graded one at a time (as every real single-file source in
+    this tool is) -- each must come back NOT ASSESSED, never a vacuous A."""
+    for i in range(5):
+        ds = _garbage_single_episode_dataset(f"garbage_{i}")
+        grade = grade_dataset(ds)
+        assert grade.defect_classes == {}, i
+        assert grade.overall_letter == LETTER_NOT_ASSESSED, i
+        assert grade.overall_score == 0, i
+        assert grade.plausibility_flagged is True, i
+
+
+def test_clean_dataset_with_passing_defect_checks_still_gets_an_a():
+    """The floor's other half: DEFECT checks that actually RAN and PASSED
+    (real gradable=1, density=0.0 evidence) must never be treated as absence
+    of evidence -- only genuine silence triggers NOT_ASSESSED."""
+    ds = Dataset(source="test", format="lerobot", episodes=[_clean_episode("a"), _clean_episode("b")])
+    grade = grade_dataset(ds)
+    assert grade.defect_classes  # non-empty: real DEFECT checks ran
+    assert all(entry["gradable"] > 0 for entry in grade.defect_classes.values())
+    assert grade.overall_letter == "A"
+    assert grade.overall_score == 100
+    assert grade.plausibility_flagged is False
+
+
+def test_floor_does_not_trigger_merely_because_the_only_evidence_is_clean():
+    """Multiple garbage episodes graded TOGETHER in one dataset can still give
+    schema_and_dim_consistency real (if trivial) evidence to compare -- e.g.
+    every episode's state genuinely has the same dim. That's a real DEFECT
+    finding (density 0.0), not silence, so the floor must not override it even
+    though the content is garbage (plausibility still flags it separately)."""
+    n = 50
+    t = np.arange(n) * 0.02
+    episodes = []
+    for i in range(3):
+        traj = Trajectory(timestamps_s=t, state=np.zeros((n, 3)), state_labels=None,
+                           action=None, action_labels=None, gripper_position=None)
+        episodes.append(Episode(episode_id=f"garbage_{i}", trajectory=traj))
+    ds = Dataset(source="garbage-multi", format="lerobot", episodes=episodes)
+    grade = grade_dataset(ds)
+    assert "hygiene.schema_dim_consistency" in grade.defect_classes
+    assert grade.overall_letter != LETTER_NOT_ASSESSED
+    assert grade.plausibility_flagged is True  # still surfaced, just doesn't force NOT_ASSESSED
+
+
+def test_min_grade_gate_rejects_not_assessed_at_any_bar():
+    from deepen_grade.cli import _LETTER_RANK
+
+    assert LETTER_NOT_ASSESSED not in _LETTER_RANK
 
 
 # --- incremental / partial grading (feature 4) -------------------------------

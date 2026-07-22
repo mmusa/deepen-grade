@@ -118,6 +118,42 @@ def test_joint_limit_saturation_uses_dataset_wide_range_not_episode_own():
     assert result.severity == Severity.PASS
 
 
+def test_dataset_dim_stats_unions_full_per_episode_uniques_not_just_lowest_few():
+    """QA finding 3: each episode individually only ever visits a handful of
+    distinct setpoints (so no single episode can prove "continuous" on its
+    own), but a DIFFERENT small set per episode -- the true dataset-wide
+    value count is well past the discrete threshold. A per-episode
+    truncation that only ever looked at each episode's lowest few unique
+    values could get stuck re-seeing the same low values and never
+    accumulate the rest; the running set must keep every episode's full
+    distinct-value contribution until the cap is confirmed crossed."""
+    n = 20
+    episodes = []
+    # 8 episodes, each pinned to ITS OWN distinct constant setpoint -- more
+    # setpoints than SATURATION_MIN_UNIQUE_VALUES, so the dim is genuinely
+    # continuous/varied dataset-wide even though every single episode alone
+    # looks perfectly discrete (exactly 1 unique value).
+    for i in range(8):
+        col = np.full((n, 1), fill_value=0.1 * i)
+        episodes.append(Episode(episode_id=f"e{i}", trajectory=_traj(state=col, n=n)))
+
+    stats = eq.dataset_dim_stats(episodes)
+    assert stats[0].is_discrete is False
+
+
+def test_dataset_dim_stats_recognizes_genuinely_discrete_dim():
+    """The other side of the same check: a dim that really only ever takes 2
+    values dataset-wide (a binary gripper flag) must still be flagged discrete."""
+    n = 20
+    episodes = []
+    for i in range(8):
+        col = np.full((n, 1), fill_value=float(i % 2))  # only ever 0.0 or 1.0
+        episodes.append(Episode(episode_id=f"e{i}", trajectory=_traj(state=col, n=n)))
+
+    stats = eq.dataset_dim_stats(episodes)
+    assert stats[0].is_discrete is True
+
+
 def test_gripper_chatter_detects_oscillation():
     n = 200
     t = np.arange(n) * 0.02

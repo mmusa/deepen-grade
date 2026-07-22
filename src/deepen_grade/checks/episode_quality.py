@@ -218,15 +218,24 @@ class DimStats:
 def dataset_dim_stats(episodes: list[Episode]) -> dict[int, DimStats]:
     """Aggregate per-state-dim (lo, hi, is_discrete) across every episode's
     trajectory in the dataset. `is_discrete` only needs to know whether a dim's
-    distinct-value count clears `SATURATION_MIN_UNIQUE_VALUES` at all, so each
-    episode contributes at most that many rounded values to a capped running
-    set -- a genuinely continuous dim trips the cap within the first episode or
-    two, so this stays O(dataset size) without ever holding a full value set.
+    distinct-value count clears `SATURATION_MIN_UNIQUE_VALUES` at all -- once
+    the running set does, the dim is confirmed continuous and is never grown
+    further, so a genuinely continuous dim only costs real work for the
+    handful of episodes it takes to trip the cap (almost always the first
+    one), keeping this close to O(dataset size) without ever holding a full
+    corpus-wide value set.
+
+    Each episode's FULL distinct-value set is unioned in (never truncated to
+    e.g. its lowest few values first): a per-episode truncation is what
+    originally let a genuinely continuous joint that repeatedly revisits the
+    same low "reset/home" values across episodes get misclassified as
+    discrete -- the higher-valued excursions later in each episode were being
+    sliced off before they ever reached the running set, so the set never
+    grew past the cap even though the joint's true range was wide.
     """
     lo: dict[int, float] = {}
     hi: dict[int, float] = {}
     uniques: dict[int, set[float]] = {}
-    cap = SATURATION_MIN_UNIQUE_VALUES + 1
 
     for ep in episodes:
         traj = ep.trajectory
@@ -239,7 +248,7 @@ def dataset_dim_stats(episodes: list[Episode]) -> dict[int, DimStats]:
             hi[d] = max(hi.get(d, col_hi), col_hi)
             seen = uniques.setdefault(d, set())
             if len(seen) <= SATURATION_MIN_UNIQUE_VALUES:
-                seen.update(np.unique(np.round(col, 9))[:cap].tolist())
+                seen.update(np.unique(np.round(col, 9)).tolist())
 
     return {
         d: DimStats(lo=lo[d], hi=hi[d], is_discrete=len(uniques[d]) <= SATURATION_MIN_UNIQUE_VALUES)

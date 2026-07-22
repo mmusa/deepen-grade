@@ -239,3 +239,72 @@ def test_positive_sample_and_max_episodes_still_work(sample_lerobot):
     # Regression guard: the new >= 1 validation must not reject legitimate values.
     assert CliRunner().invoke(main, ["grade", str(sample_lerobot), "--sample", "1"]).exit_code == 0
     assert CliRunner().invoke(main, ["grade", str(sample_lerobot), "--max-episodes", "1"]).exit_code == 0
+
+
+# --- QA finding 1: NOT_ASSESSED floor, end-to-end via a real on-disk dataset -
+
+
+def _garbage_lerobot_dataset(tmp_path):
+    """A single, 2-frame LeRobot episode with dead-constant state -- the real
+    on-disk ingest path for the NOT_ASSESSED floor: too few frames for
+    topic_frequency_and_drops to analyze (MIN_MESSAGES_FOR_FREQ_ANALYSIS is 3),
+    only 1 episode for schema_dim_consistency, and LeRobot has no tf concept at
+    all -- every DEFECT-eligible check abstains. The constant state also trips
+    plausibility.robot_data ("state values never change")."""
+    import numpy as np
+    import pandas as pd
+
+    root = tmp_path / "garbage_lerobot"
+    (root / "data" / "chunk-000").mkdir(parents=True)
+    (root / "meta").mkdir(parents=True)
+
+    n = 2
+    state = np.zeros((n, 3))
+    df = pd.DataFrame({
+        "episode_index": 0,
+        "frame_index": np.arange(n),
+        "timestamp": np.arange(n) * 0.02,
+        "task_index": 0,
+        "observation.state": list(state),
+        "action": list(state.copy()),
+    })
+    df.to_parquet(root / "data" / "chunk-000" / "episode_000000.parquet")
+
+    info = {
+        "fps": 50,
+        "total_episodes": 1,
+        "features": {
+            "observation.state": {"dtype": "float32", "shape": [3], "names": ["j1", "j2", "j3"]},
+            "action": {"dtype": "float32", "shape": [3], "names": ["j1", "j2", "j3"]},
+        },
+    }
+    (root / "meta" / "info.json").write_text(json.dumps(info))
+    return root
+
+
+def test_garbage_dataset_end_to_end_via_cli_is_not_assessed(tmp_path):
+    root = _garbage_lerobot_dataset(tmp_path)
+    result = CliRunner().invoke(main, ["grade", str(root), "--json"])
+    assert result.exit_code == 0
+    report = json.loads(result.output)
+    assert report["overall"] == {"score": 0, "grade": "NOT ASSESSED"}
+    assert report["defect_classes"] == {}
+    assert report["content_plausibility"]["flagged"] is True
+    assert "never change" in report["content_plausibility"]["detail"]
+
+
+def test_garbage_dataset_fails_min_grade_gate_at_any_bar(tmp_path):
+    root = _garbage_lerobot_dataset(tmp_path)
+    # Even the loosest possible bar (F) must not be "cleared" by a dataset
+    # that couldn't be graded at all.
+    result = CliRunner().invoke(main, ["grade", str(root), "--json", "--min-grade", "F"])
+    assert result.exit_code == 1
+
+
+def test_garbage_dataset_terminal_shows_plausibility_flag_and_claim_column(tmp_path):
+    root = _garbage_lerobot_dataset(tmp_path)
+    result = CliRunner().invoke(main, ["grade", str(root)])
+    assert result.exit_code == 0
+    assert "CONTENT PLAUSIBILITY FLAG" in result.output
+    assert "NOT ASSESSED" in result.output
+    assert "Claim" in result.output  # per-check claim-type column (QA finding 2)

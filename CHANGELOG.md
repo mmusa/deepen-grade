@@ -36,6 +36,42 @@ a lower or higher number does not mean the underlying data changed.
 
 ### Fixed
 
+- **The "vacuous A" gap: a dataset where no DEFECT-class check produced any
+  gradable finding used to score a perfect 100/A.** Root cause: each
+  DEFECT-eligible check abstains (`NOT_ASSESSED`) when its own precondition
+  isn't met (no topics with enough messages to analyze a rate on, no tf
+  concept, fewer than 2 episodes to compare schemas across) -- and the
+  aggregation filtered `NOT_ASSESSED` findings out entirely rather than
+  tracking "no check ran at all" as its own state, so `max(density,
+  default=0.0)` silently read total silence as "nothing failed." A dataset
+  with zero episodes, or one small/sparse enough that every DEFECT check
+  individually abstains, now gets the letter `"NOT ASSESSED"` (score 0, not
+  a graded F either -- an empty gradable set must never auto-pass *or*
+  auto-fail) instead. A dataset where DEFECT checks actually ran and
+  passed -- even on degenerate content -- is unaffected: real evidence
+  (density 0.0 included) still earns its letter; only genuine silence
+  triggers this. `--min-grade` now treats `NOT ASSESSED` as failing any
+  requested bar, including `F`.
+- **Content-plausibility flag now surfaces next to the grade, not just
+  buried in the dataset-level checks table.** `plausibility.robot_data`
+  firing (this doesn't look like robot-learning data) is an index-curation
+  gate that must never silently coexist with a confident-looking letter --
+  it's now a dedicated `content_plausibility` JSON field and a
+  `CONTENT PLAUSIBILITY FLAG` line directly under `Overall grade` in the
+  terminal report.
+- **Per-check tables no longer render RISK-class findings identically to
+  DEFECT ones.** A RISK FAIL/WARN sitting right under an `A` grade could read
+  as if it had caused that grade. Every check row now carries a `Claim`
+  column (`DEFECT`/`risk`/`characteristic`/`not assessed`/`by design`),
+  styled distinctly from the severity column, with a footnote reiterating
+  that only `DEFECT` moves the letter.
+- `dataset_dim_stats`'s distinct-value tracking no longer truncates each
+  episode's contribution to its lowest few unique values before unioning --
+  it now unions each episode's full distinct-value set into the running
+  tracker (still stopping once the cap is confirmed crossed), removing a
+  truncation-order dependency that could otherwise hide part of a
+  continuous joint's true range behind repeatedly-revisited low values.
+
 - **`action_state_consistency` no longer hard-FAILs delta/velocity/torque/
   tokenized-action datasets.** Confirmed on a 50,415-episode BridgeData2 run:
   this check was FAILing ~99% of episodes because BridgeData2's actions are
@@ -65,8 +101,9 @@ a lower or higher number does not mean the underlying data changed.
   `None` (undeclared) until a format or dataset's own metadata states one.
 - `--json` report: `grade_schema`, `defect_classes` (per-DEFECT-check-id
   density behind `overall`), `training_value` (per-RISK-check-id severity
-  counts). Report `schema_version` bumped 3 -> 4; nothing existing was
-  removed or renamed.
+  counts), `content_plausibility` (`{"flagged", "detail"}`). Report
+  `schema_version` bumped 3 -> 5; nothing existing was removed or renamed.
+  `overall.grade` can now also be the string `"NOT ASSESSED"`.
 - Golden-corpus regression test (`tests/test_golden_corpus.py`): grades every
   checked-in fixture dataset and asserts the full expected outcome (grade,
   defect densities, per-check claim types), so an intentional check change
