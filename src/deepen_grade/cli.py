@@ -34,7 +34,7 @@ def main() -> None:
 @click.option("--json", "as_json", is_flag=True, help="Print the machine-readable JSON report instead of the terminal report.")
 @click.option("-o", "--output", "output_path", type=click.Path(), default=None,
               help="Write the report to a file instead of stdout (JSON only). Written incrementally: "
-                   "a partial report lands on disk every ~200 graded episodes, so a crash/timeout mid-run "
+                   "a partial report lands on disk periodically (at least every 10% of progress), so a crash/timeout mid-run "
                    "still leaves a valid, parseable file with \"partial\": true.")
 @click.option("--min-grade", type=click.Choice(["A", "B", "C", "D", "F"]), default=None,
               help="Exit with a non-zero code if the overall grade is worse than this (for CI gating).")

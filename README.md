@@ -133,7 +133,8 @@ themselves are unaffected.
 ### Partial reports: `--json -o` writes incrementally
 
 With `--json -o report.json`, the report is written to disk incrementally --
-roughly every 200 graded episodes, not just at the end -- via a write-to-temp-
+at a progress-proportional interval (roughly every 10% of graded episodes,
+never more often than every 200), not just at the end -- via a write-to-temp-
 file-then-rename so the file on disk is always a complete, parseable JSON
 document, never a half-written one. An in-progress write has `"partial":
 true`; the final write sets it to `false`. This means a crash or CI timeout

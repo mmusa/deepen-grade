@@ -162,18 +162,30 @@ def grade_dataset(
     """Grade every episode plus the dataset-level checks.
 
     `on_progress`, if given, is called with an in-progress (`partial=True`)
-    DatasetGrade after every `batch_size` episodes -- the CLI's `--json -o`
-    incremental-write path uses this to flush a valid report to disk
-    periodically instead of only at the end. Dataset-level checks (schema/dim
-    consistency, plausibility) only need `dataset.episodes`' metadata, which
-    is already fully materialized by the time grading starts, so they run
-    once up front and are included in every progress callback too.
+    DatasetGrade periodically -- the CLI's `--json -o` incremental-write path
+    uses this to flush a valid report to disk instead of only at the end.
+    Each flush rewrites the whole report, so a fixed interval makes total
+    bytes written grow quadratically with episode count (a 50k-episode run
+    wrote ~100x its final report size). The interval therefore grows with
+    progress: at least `batch_size` episodes apart, and at least 10% of the
+    episodes graded so far -- total write volume stays within ~10x the final
+    report size while a crash still loses at most ~10% of progress.
+    Dataset-level checks (schema/dim consistency, plausibility) only need
+    `dataset.episodes`' metadata, which is already fully materialized by the
+    time grading starts, so they run once up front and are included in every
+    progress callback too.
     """
     dataset_results = hygiene.run_dataset_checks(dataset) + plausibility.run_checks(dataset)
     episode_grades: list[EpisodeGrade] = []
+    last_flush = 0
     for i, ep in enumerate(dataset.episodes, start=1):
         episode_grades.append(grade_episode(ep))
-        if on_progress is not None and i % batch_size == 0 and i < len(dataset.episodes):
+        if (
+            on_progress is not None
+            and i < len(dataset.episodes)
+            and i - last_flush >= max(batch_size, i // 10)
+        ):
             on_progress(_assemble_grade(dataset, episode_grades, dataset_results, partial=True))
+            last_flush = i
 
     return _assemble_grade(dataset, episode_grades, dataset_results, partial=False)

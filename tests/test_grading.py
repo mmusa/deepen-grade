@@ -136,6 +136,30 @@ def test_on_progress_fires_every_batch_with_a_valid_partial_report():
     assert len(final_report["episodes"]) == 7
 
 
+def test_on_progress_interval_grows_with_progress():
+    """Each flush rewrites the whole report, so a fixed 200-episode interval
+    makes total bytes written quadratic in episode count (a 50k-episode run
+    wrote ~100x its final report size). The interval must grow with progress:
+    at 20k episodes a fixed interval would fire 99 times; the growing
+    interval stays logarithmic, and each flush is at most ~10% of progress
+    apart (the crash-loss bound)."""
+    episodes = [_clean_episode(f"e{i}") for i in range(20_000)]
+    ds = Dataset(source="t", format="lerobot", episodes=episodes)
+
+    flush_points: list[int] = []
+
+    def on_progress(partial_grade):
+        flush_points.append(len(partial_grade.episode_grades))
+
+    grade_dataset(ds, on_progress=on_progress)
+
+    assert 5 < len(flush_points) < 40  # 99 would mean fixed-interval quadratic writes
+    gaps = [b - a for a, b in zip(flush_points, flush_points[1:])]
+    assert all(gap >= 200 for gap in gaps)
+    for prev, cur in zip(flush_points, flush_points[1:]):
+        assert cur - prev <= max(200, cur // 10) + 1  # loss bound holds
+
+
 def test_grade_dataset_without_on_progress_never_calls_back():
     ds = Dataset(source="t", format="lerobot", episodes=[_clean_episode("a")])
     grade = grade_dataset(ds)  # default on_progress=None must not raise
