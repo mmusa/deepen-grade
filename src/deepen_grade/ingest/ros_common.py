@@ -243,4 +243,7 @@ def series_to_trajectory(
         action=action,
         action_labels=None,
         gripper_position=gripper,
+        # Neither JointState nor Twist carries action-space semantics --
+        # undeclared, honestly, until a topic/dataset convention states one.
+        action_space=None,
     )

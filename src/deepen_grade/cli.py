@@ -24,7 +24,16 @@ _LETTER_RANK = {letter: i for i, (_, letter) in enumerate(GRADE_BANDS)}  # A=0 (
 @click.group()
 @click.version_option(__version__, prog_name="deepen-grade")
 def main() -> None:
-    """deepen-grade: grade robot-learning datasets for training-readiness, for free, locally."""
+    """deepen-grade: grade robot-learning datasets for training-readiness, for free, locally.
+
+    The letter grade is DEFECT-only (grade_schema 1.0.0): it reflects objective,
+    gate-surviving defects (topic drops vs. a topic's own rate, a broken tf-tree,
+    schema/dim mismatches), never a proxy training-quality signal. Idle, jerk,
+    chatter, joint-limit, action-state, and cross-modal-skew findings are
+    proxies, not correctness claims -- they're reported in the report's
+    "training_value" section instead and never move the grade. See README's
+    Grading section.
+    """
 
 
 @main.command()

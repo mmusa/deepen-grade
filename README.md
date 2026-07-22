@@ -17,7 +17,7 @@ $ deepen grade my_episode.mcap
 │ my_episode.mcap                                    │
 │ format: mcap   episodes: 1                          │
 ╰──────────────────────────────────────────────────────╯
-Overall grade: B (82/100)   self-assessment -- hygiene & episode quality only
+Overall grade: A (100/100)   grade_schema 1.0.0 -- DEFECT-class findings only, see training_value below
 Calibration:   NOT ASSESSED
                no calibration metadata found anywhere in this dataset -- calibration
                quality is unknown, not good; verification requires the deep audit
@@ -26,7 +26,7 @@ Calibration:   NOT ASSESSED
 ┏━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━┓
 ┃ Episode     ┃ Grade ┃ Score ┃ Task ┃
 ┡━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━┩
-│ my_episode  │ B     │ 82    │ -    │
+│ my_episode  │ A     │ 100   │ -    │
 └─────────────┴───────┴───────┴──────┘
 
            Checks -- my_episode
@@ -38,9 +38,20 @@ Calibration:   NOT ASSESSED
 │ LDJ smoothness          │ PASS │ LDJ = -14.2
 │ Joint-limit saturation  │ PASS │ worst dim 'joint_3' saturated 4.2%
 │ Gripper chatter         │ PASS │ 2 direction reversals (0.31 Hz)
-│ Action-state consistency│ PASS │ consistency score 0.94
+│ Action-state consistency│ N/A  │ action-space semantics undeclared
 │ Calibration sanity      │ INFO │ NOT ASSESSED -- no camera calibration metadata found
 └──────────────────────────────────────────────────────┘
+
+    Training-value profile (RISK -- never graded)
+┏━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━┳━━━━━┓
+┃ Check                   ┃ Pass ┃ Warn ┃ Fail ┃ N/A ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━╇━━━━━┩
+│ Cross-modal sync skew   │ 0    │ 1    │ 0    │ 0   │
+│ Idle / stall detection  │ 1    │ 0    │ 0    │ 0   │
+│ LDJ smoothness          │ 1    │ 0    │ 0    │ 0   │
+│ Joint-limit saturation  │ 1    │ 0    │ 0    │ 0   │
+│ Gripper chatter         │ 1    │ 0    │ 0    │ 0   │
+└─────────────────────────────────────────────────────┘
 
 ╭─ Funnel ─────────────────────────────────────────────╮
 │ What this can't tell you locally:                    │
@@ -151,22 +162,34 @@ pass `--hf-token` (or set `HF_TOKEN`) to raise it.
 
 ## What it checks (and what each check cites)
 
-### A. Hygiene -- deterministic, applies to any recording
-| Check | What it measures | Cited source |
-|---|---|---|
-| Topic frequency & drops | per-topic observed rate, gaps > 3x median interval | ISO/WD 26264-1 companion (arXiv:2606.19769) |
-| Cross-modal timestamp skew | ms skew between vision/proprioception/lidar streams | arXiv:2606.19769 |
-| tf-tree integrity | single-parent tree, no static/dynamic conflicts, no cycles | REP 105 |
-| Message-schema & state/action-dim consistency | consistent types/dims across a dataset's episodes | arXiv:2606.19769, ASAM OpenLABEL |
+Every check result carries a `claim_type` -- see **Grading** below for what
+that means and why only some of these checks can move the letter.
 
-### B. Episode quality -- published metric implementations
-| Check | What it measures | Cited source |
-|---|---|---|
-| Idle / stall | near-zero normalized action/state velocity runs | DQAF (arXiv:2605.26349), SCIZOR (arXiv:2505.22626) |
-| Smoothness | log-dimensionless-jerk of the speed profile | Balasubramanian et al. 2015 (IEEE TBME), DQAF |
-| Joint-limit saturation | time spent near the episode's own observed value range | DQAF |
-| Gripper chatter | direction-reversal rate of gripper position | DQAF |
-| Action-state consistency | normalized tracking error between commanded action and state | DQAF, SCIZOR |
+### A. Hygiene -- deterministic, applies to any recording
+| Check | What it measures | Claim type | Cited source |
+|---|---|---|---|
+| Topic frequency & drops | per-topic observed rate vs. that topic's own median interval, gaps > 3x it | DEFECT | ISO/WD 26264-1 companion (arXiv:2606.19769) |
+| Cross-modal timestamp skew | ms skew between vision/proprioception/lidar streams | RISK | arXiv:2606.19769 |
+| tf-tree integrity | single-parent tree, no static/dynamic conflicts, no cycles | DEFECT | REP 105 |
+| Message-schema & state/action-dim consistency | consistent types/dims across a dataset's episodes | DEFECT | arXiv:2606.19769, ASAM OpenLABEL |
+
+Cross-modal skew is RISK, not DEFECT, because its ms budget
+(`SKEW_WARN_MS`/`SKEW_FAIL_MS` in `checks/hygiene.py`) is a Deepen convention
+parameterized by sensor class, not a sourced standard -- see the module
+docstring.
+
+### B. Episode quality -- published metric implementations, all training-value (RISK)
+| Check | What it measures | Claim type | Cited source |
+|---|---|---|---|
+| Idle / stall | near-zero normalized action/state velocity runs | RISK | DQAF (arXiv:2605.26349), SCIZOR (arXiv:2505.22626) |
+| Smoothness | log-dimensionless-jerk of the speed profile | RISK | Balasubramanian et al. 2015 (IEEE TBME), DQAF |
+| Joint-limit saturation | time spent near the DATASET-WIDE observed value range | RISK | DQAF |
+| Gripper chatter | direction-reversal rate of gripper position | RISK | DQAF |
+| Action-state consistency | normalized tracking error between commanded action and state | CHARACTERISTIC (dim mismatch) / NOT_ASSESSED (undeclared action space) / RISK (declared absolute) | DQAF, SCIZOR |
+
+Every episode-quality check is a training-value proxy -- see **Grading**
+below for why none of them can move the letter, and why that's the fix, not
+a regression.
 
 **On thresholds:** the papers above define *what to measure*; the specific
 pass/warn/fail cutoffs (e.g. "stall_frac > 30% is a FAIL") are deepen-grade's
@@ -214,6 +237,71 @@ It's always `INFO` (or `N/A` when nothing looks wrong), never affects the
 score, and is deliberately **uncited** -- "does this look like robot data" is
 not a metric any of the papers above define. See
 [`src/deepen_grade/checks/plausibility.py`](src/deepen_grade/checks/plausibility.py).
+
+## Grading: DEFECT-only letter, training_value profile, grade_schema
+
+`grade_schema` (currently `"1.0.0"`, carried on every report) is a rewrite of
+how the letter is computed, not just a version bump:
+
+**The letter is DEFECT-only.** Every check result carries a `claim_type` --
+`DEFECT`, `RISK`, `CHARACTERISTIC`, `BY_DESIGN`, or `NOT_ASSESSED` (see
+[`checks/base.py`](src/deepen_grade/checks/base.py)'s `ClaimType`). Only
+`DEFECT` findings can ever move the letter. `RISK` findings (idle/jerk/
+chatter/joint-limit/action-state/cross-modal-skew -- every episode-quality
+check, plus cross-modal skew) are proxy training-quality signals whose
+thresholds are conventions, not sourced correctness claims; they're reported
+in the report's `training_value` section instead (counts per check, zero
+letter impact). `CHARACTERISTIC` (e.g. action/state dims differing by
+architecture), `BY_DESIGN`, and `NOT_ASSESSED` (a required gate didn't hold --
+e.g. an undeclared action-space semantics field) never touch either.
+
+**Aggregation is defect DENSITY, worst-class-bounded -- not a penalty
+average.** For every `DEFECT`-class check_id, deepen-grade computes that
+check's defect density: `defective findings (WARN or FAIL) / gradable
+findings (anything but N/A)`. The dataset's 0-100 integrity score is
+`100 * (1 - worst_density)`, where `worst_density` is the MAXIMUM density
+across DEFECT check classes -- never their average. This is deliberate: a
+single systemic defect (e.g. every episode's tf-tree is broken) must not be
+diluted by four other clean classes into a passing grade. The exact
+functional form and worked edge cases live in
+[`grading.py`](src/deepen_grade/grading.py)'s `integrity_score` docstring, in
+the code, not just here. Grade bands are the same `GRADE_BANDS` table as
+before (A >= 90, B >= 75, C >= 60, D >= 40, F otherwise), now applied to this
+density-derived score instead of a WARN/FAIL penalty sum.
+
+Calibration keeps its own separate top-level verdict, unaffected by any of
+this -- see section C above.
+
+**Two checks were fixed as part of this rewrite** (both confirmed on a
+50k+-episode BridgeData2 run before the fix):
+- `action_state_consistency` used to hard-FAIL any dataset whose action
+  space is a delta/velocity/torque/tokenized convention (the majority of
+  modern manipulation datasets, e.g. BridgeData2's zero-centered deltas),
+  because it compared action to state unconditionally. It now only runs the
+  element-wise comparison when a trajectory *declares* `action_space ==
+  "absolute"`; every other value (including the honest default of
+  undeclared/`None` -- no ingest adapter in this codebase populates it yet)
+  returns `NOT_ASSESSED` naming the missing declaration. A dim-count
+  mismatch is now `CHARACTERISTIC` ("architectural, not a defect"), never a
+  FAIL.
+- `joint_limit_saturation` used to use each *episode's own* min/max as the
+  limit proxy, so any low-variance dim (a binary 0/1 gripper flag; a short
+  episode that only visits a narrow slice of a joint's true range) read as
+  permanently "at the limit." It now computes the reference range across
+  the WHOLE dataset (aggregated once before per-episode grading starts),
+  and excludes binary/discrete dims (fewer than 5 distinct values
+  dataset-wide) and near-constant dims outright. It remains RISK-only: there
+  is no declared-joint-limits field in this codebase yet, so this is always
+  a proxy, never a DEFECT.
+
+**`--json` report additions (schema_version 4):** `grade_schema`,
+`defect_classes` (the density behind `overall`, per DEFECT check_id), and
+`training_value` (RISK-class severity counts, per check_id). Nothing
+existing was removed or renamed.
+
+**A note on comparability:** grades produced under `grade_schema` earlier
+than `1.0.0` are not comparable to grades under `1.0.0` -- the method changed,
+not the data. See [CHANGELOG.md](CHANGELOG.md).
 
 ## What this can't tell you locally
 

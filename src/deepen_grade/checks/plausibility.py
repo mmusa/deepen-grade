@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from deepen_grade.checks.base import CheckResult, Severity
+from deepen_grade.checks.base import CheckResult, ClaimType, Severity
 from deepen_grade.ingest.base import Dataset
 
 CHECK_ID = "plausibility.robot_data"
@@ -63,6 +63,7 @@ def robot_data_plausibility(dataset: Dataset) -> CheckResult:
             severity=Severity.NOT_APPLICABLE,
             summary="content plausibly looks like robot-learning data",
             citation_keys=(),
+            claim_type=ClaimType.NOT_ASSESSED,
         )
 
     return CheckResult(
@@ -74,6 +75,9 @@ def robot_data_plausibility(dataset: Dataset) -> CheckResult:
             f"robot-learning data ({reason})"
         ),
         citation_keys=(),  # deliberately uncited heuristic -- see module docstring
+        # CHARACTERISTIC (GRADING_TAXONOMY_V1.md section 2F, "coverage & redundancy"):
+        # a content-plausibility flag describes the dataset, it never claims a defect.
+        claim_type=ClaimType.CHARACTERISTIC,
         details={"reason": reason, "episodes_checked": len(with_trajectory)},
     )
 

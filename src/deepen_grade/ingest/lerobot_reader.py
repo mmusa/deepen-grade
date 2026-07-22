@@ -496,6 +496,10 @@ def _build_episode(ep_idx, group, fps, state_col, state_labels, action_labels,
             action=action,
             action_labels=action_labels,
             gripper_position=gripper,
+            # LeRobot's core spec has no action-space-semantics slot (see
+            # GRADING_TAXONOMY_V1.md's gap table) -- undeclared, honestly, until
+            # a format or a dataset's own metadata actually states one.
+            action_space=None,
         )
 
     topics = [

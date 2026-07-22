@@ -72,7 +72,8 @@ def render_terminal(grade: DatasetGrade, console: Console | None = None) -> None
         console.print("[bold yellow]PARTIAL REPORT[/bold yellow] -- grading was still in progress when this was written.")
     console.print(
         f"Overall grade: [{grade_style}]{grade.overall_letter}[/{grade_style}] "
-        f"({grade.overall_score}/100)   [dim]self-assessment -- hygiene & episode quality only[/dim]"
+        f"({grade.overall_score}/100)   [dim]grade_schema {escape(grade.grade_schema)} -- "
+        "DEFECT-class findings only, see training_value below[/dim]"
     )
     # Calibration is a top-level verdict of its own, never part of the grade:
     # the grade must not imply calibration accuracy it cannot see.
@@ -113,6 +114,9 @@ def render_terminal(grade: DatasetGrade, console: Console | None = None) -> None
         else:
             console.print(_check_aggregate_table(grade))
 
+    if grade.training_value:
+        console.print(_training_value_table(grade.training_value))
+
     console.print(Panel(funnel_text(), title="Funnel", border_style="cyan"))
     console.print(Panel(Text(SELF_ASSESSMENT_NOTE), title="Self-assessment", border_style="yellow"))
 
@@ -127,6 +131,29 @@ def _episode_detail_table(eg) -> Table:
     table.add_column("Citation")
     for r in eg.results:
         table.add_row(r.name, _severity_text(r.severity), escape(r.summary), _citation_text(r.citation_keys))
+    return table
+
+
+def _training_value_table(training_value: dict) -> Table:
+    """RISK-class findings -- training-value proxy signals, never a letter
+    input (see grading.py's `_training_value_profile`). Printed separately
+    from the DEFECT-only grade so it's never mistaken for one.
+    """
+    table = Table(title="Training-value profile (RISK -- never graded)")
+    table.add_column("Check")
+    table.add_column("Pass")
+    table.add_column("Warn")
+    table.add_column("Fail")
+    table.add_column("N/A")
+    for entry in training_value.values():
+        counts = entry["counts"]
+        table.add_row(
+            escape(entry["name"]),
+            str(counts.get("pass", 0)),
+            f"[yellow]{counts['warn']}[/yellow]" if counts.get("warn") else "0",
+            f"[bold red]{counts['fail']}[/bold red]" if counts.get("fail") else "0",
+            str(counts.get("n/a", 0)),
+        )
     return table
 
 

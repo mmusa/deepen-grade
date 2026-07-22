@@ -50,9 +50,57 @@ def test_min_grade_gate_passes_when_good_enough(sample_mcap):
     assert result.exit_code == 0
 
 
-def test_min_grade_gate_fails_when_not_good_enough(sample_mcap):
-    result = CliRunner().invoke(main, ["grade", str(sample_mcap), "--json", "--min-grade", "A"])
+def _lerobot_with_dim_mismatch(tmp_path):
+    """A minimal 2-episode LeRobot dataset where episode 1's state has a
+    different dim than episode 0's -- triggers hygiene.schema_dim_consistency,
+    a genuine DEFECT-class finding, so there's still a real dataset to exercise
+    the --min-grade gate's *failing* path now that gripper-chatter/cross-modal-
+    skew (the old fixture's only non-A findings) are RISK, not DEFECT."""
+    import numpy as np
+    import pandas as pd
+
+    root = tmp_path / "dim_mismatch_lerobot"
+    (root / "data" / "chunk-000").mkdir(parents=True)
+    (root / "meta").mkdir(parents=True)
+
+    n = 20
+    for ep_idx, dim in enumerate([4, 3]):
+        state = np.zeros((n, dim))
+        df = pd.DataFrame({
+            "episode_index": ep_idx,
+            "frame_index": np.arange(n),
+            "timestamp": np.arange(n) * 0.02,
+            "task_index": 0,
+            "observation.state": list(state),
+            "action": list(state.copy()),
+        })
+        df.to_parquet(root / "data" / "chunk-000" / f"episode_{ep_idx:06d}.parquet")
+
+    info = {
+        "fps": 50,
+        "total_episodes": 2,
+        "features": {
+            "observation.state": {"dtype": "float32", "shape": [4], "names": ["j1", "j2", "j3", "gripper"]},
+            "action": {"dtype": "float32", "shape": [4], "names": ["j1", "j2", "j3", "gripper"]},
+        },
+    }
+    (root / "meta" / "info.json").write_text(json.dumps(info))
+    return root
+
+
+def test_min_grade_gate_fails_when_not_good_enough(tmp_path):
+    root = _lerobot_with_dim_mismatch(tmp_path)
+    result = CliRunner().invoke(main, ["grade", str(root), "--json", "--min-grade", "A"])
     assert result.exit_code == 1
+
+
+def test_min_grade_gate_passes_at_a_when_only_risk_findings_fire(sample_mcap):
+    """sample_mcap deliberately hits WARN/FAIL on gripper-chatter and
+    cross-modal-skew (see tests/fixtures/scenario.py) -- both RISK-class since
+    the grade_schema 1.0.0 retype, so an otherwise-clean dataset with only
+    those findings must still clear --min-grade A."""
+    result = CliRunner().invoke(main, ["grade", str(sample_mcap), "--json", "--min-grade", "A"])
+    assert result.exit_code == 0
 
 
 def test_unknown_format_reports_clean_error(tmp_path):

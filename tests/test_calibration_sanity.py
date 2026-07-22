@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 from deepen_grade.checks import calibration_sanity as cs
-from deepen_grade.checks.base import Severity
+from deepen_grade.checks.base import ClaimType, Severity
 from deepen_grade.ingest.base import CalibrationInfo, Episode
 
 GOOD_INTRINSICS = {"fx": 500.0, "fy": 500.0, "cx": 320.0, "cy": 240.0}
@@ -13,6 +13,7 @@ def test_no_calibration_present_is_not_assessed_and_funnels():
     assert result.severity == Severity.INFO
     assert "NOT ASSESSED" in result.summary
     assert "deepen-robograde.pages.dev" in result.details["funnel"]
+    assert result.claim_type == ClaimType.NOT_ASSESSED
 
 
 def test_valid_calibration_passes():
@@ -20,6 +21,11 @@ def test_valid_calibration_passes():
     ep = Episode(episode_id="e1", calibrations=[cal])
     result = cs.calibration_sanity(ep)
     assert result.severity == Severity.PASS
+    # Tagged DEFECT per GRADING_TAXONOMY_V1.md section 2E, but grading.py still
+    # excludes CALIBRATION_CHECK_ID from the letter by check_id regardless --
+    # calibration keeps its own separate top-level verdict (see test_grading.py's
+    # test_calibration_never_moves_the_score).
+    assert result.claim_type == ClaimType.DEFECT
 
 
 def test_nan_extrinsics_fails():

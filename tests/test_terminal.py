@@ -6,7 +6,7 @@ markup-parsing rich call. See report/terminal.py's `escape()` usage."""
 
 from rich.console import Console
 
-from deepen_grade.checks.base import CheckResult, Severity
+from deepen_grade.checks.base import CheckResult, ClaimType, Severity
 from deepen_grade.grading import DatasetGrade, EpisodeGrade
 from deepen_grade.report.terminal import render_terminal
 
@@ -28,7 +28,8 @@ def test_dataset_warning_with_brackets_survives_rendering():
 
 
 def test_episode_task_with_brackets_survives_rendering():
-    result = CheckResult(check_id="x", name="x", severity=Severity.PASS, summary="s", citation_keys=("rep105",))
+    result = CheckResult(check_id="x", name="x", severity=Severity.PASS, summary="s", citation_keys=("rep105",),
+                          claim_type=ClaimType.DEFECT)
     eg = EpisodeGrade(episode_id="e1", score=90, letter="A", results=[result],
                        task="grasp [red block] and place in [bin 2]")
     grade = DatasetGrade(source="test", format="lerobot", episode_grades=[eg])
@@ -40,6 +41,7 @@ def test_check_summary_with_brackets_survives_rendering():
     result = CheckResult(
         check_id="x", name="x", severity=Severity.WARN,
         summary="topic [weird/name] flagged", citation_keys=("rep105",),
+        claim_type=ClaimType.DEFECT,
     )
     eg = EpisodeGrade(episode_id="e1", score=90, letter="B", results=[result])
     grade = DatasetGrade(source="test", format="lerobot", episode_grades=[eg])

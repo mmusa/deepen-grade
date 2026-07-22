@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from deepen_grade.checks.base import CheckResult, Severity
+from deepen_grade.checks.base import CheckResult, ClaimType, Severity
 from deepen_grade.citations import SHADOW_EXTRINSICS_NOISE
 from deepen_grade.ingest.base import CalibrationInfo, Episode
 
@@ -83,6 +83,7 @@ def calibration_sanity(episode: Episode) -> CheckResult:
             severity=Severity.INFO,
             summary="NOT ASSESSED -- no camera calibration metadata found for this episode",
             citation_keys=(SHADOW_EXTRINSICS_NOISE.key,),
+            claim_type=ClaimType.NOT_ASSESSED,
             details={"cameras": [], "funnel": FUNNEL_NOTE},
         )
 
@@ -111,6 +112,11 @@ def calibration_sanity(episode: Episode) -> CheckResult:
         severity=severity,
         summary=summary,
         citation_keys=(SHADOW_EXTRINSICS_NOISE.key,),
+        # DEFECT per GRADING_TAXONOMY_V1.md section 2E ("ceiling: structural DEFECT
+        # locally"), but grading.py excludes CALIBRATION_CHECK_ID from letter
+        # aggregation by check_id regardless -- calibration keeps its own separate
+        # top-level verdict, unchanged (see grading.py's calibration_verdict()).
+        claim_type=ClaimType.DEFECT,
         details={"cameras": [cal.camera_id for cal in episode.calibrations],
                  "flagged": flagged, "funnel": FUNNEL_NOTE},
     )

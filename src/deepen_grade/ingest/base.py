@@ -66,6 +66,16 @@ class TfEdge:
     is_static: bool
 
 
+# Declared action-space semantics -- GRADING_TAXONOMY_V1.md section 2C: element-wise
+# action/state comparison is only meaningful for a declared "absolute" (position)
+# action space. Delta/velocity/torque/tokenized actions are incommensurable with
+# state by construction, not by defect. None means undeclared, which is the
+# honest default: no ingest adapter in this codebase currently populates this
+# field (the LeRobot spec has no such slot), so it stays None until a format or
+# a dataset's own metadata actually states it.
+ActionSpace = str  # "absolute" | "delta" | "velocity" | "torque" | "tokenized" | None
+
+
 @dataclass
 class Trajectory:
     """Normalized per-episode kinematic data used by episode-quality checks.
@@ -81,6 +91,7 @@ class Trajectory:
     action: np.ndarray | None  # (T, A) commanded action, same convention as state where possible
     action_labels: list[str] | None
     gripper_position: np.ndarray | None  # (T,) or (T, G)
+    action_space: ActionSpace | None = None
 
 
 @dataclass

@@ -18,13 +18,25 @@ values taken from the papers -- because a universal numeric cutoff across
 every robot embodiment and control rate doesn't exist in the literature.
 They are intentionally simple and stated here in one place so anyone can
 audit or override them; see README for rationale.
+
+CLAIM TYPES (GRADING_TAXONOMY_V1.md section 2C -- "kinematic & dynamic
+plausibility", ceiling RISK): every check in this module is a training-value
+proxy, never a correctness claim, and is typed `ClaimType.RISK` accordingly --
+none of them can move the letter grade (see grading.py). idle/jerk/chatter are
+proxies within their stated validity domain by construction (there's no
+"declared idle budget" or "declared limit" metadata to gate them against
+today), so they're RISK unconditionally. `action_state_consistency` and
+`joint_limit_saturation` carry an extra NOT_ASSESSED / CHARACTERISTIC path
+each -- see their docstrings.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
-from deepen_grade.checks.base import CheckResult, Severity
+from deepen_grade.checks.base import CheckResult, ClaimType, Severity
 from deepen_grade.citations import DQAF, LDJ_SMOOTHNESS, SCIZOR
 from deepen_grade.ingest.base import Episode, Trajectory
 
@@ -36,10 +48,22 @@ STALL_WARN_FRAC = 0.10       # fraction of episode duration spent idle
 STALL_FAIL_FRAC = 0.30
 
 # --- joint-limit saturation --------------------------------------------------
-SATURATION_MARGIN_FRAC = 0.02   # within this fraction of observed range = "at the limit"
+SATURATION_MARGIN_FRAC = 0.02   # within this fraction of the dataset-wide range = "at the limit"
 SATURATION_MIN_RUN_S = 0.2      # must be sustained this long to count (not sensor noise)
 SATURATION_WARN_FRAC = 0.10
 SATURATION_FAIL_FRAC = 0.25
+# A dim with fewer distinct values than this across the WHOLE dataset is
+# discrete/binary (a 0/1 gripper flag, a mode enum), not a continuous joint --
+# every sample of a binary dim sits "at the limit" by construction, so the
+# saturation proxy is meaningless for it and must be excluded rather than
+# reporting a permanent, content-free "100% saturated" (the exact bug this
+# check shipped with: see GRADING_TAXONOMY_V1.md's origin story).
+SATURATION_MIN_UNIQUE_VALUES = 5
+# A dim whose dataset-wide (hi - lo) is below this has no meaningful excursion
+# to saturate at all (already excluded below independent of the unique-value
+# count -- kept as its own constant since "near-constant" and "discrete" are
+# different failure modes, per GRADING_TAXONOMY_V1.md section 2C).
+SATURATION_MIN_RANGE = 1e-9
 
 # --- gripper chatter ----------------------------------------------------------
 CHATTER_WARN_HZ = 2.0
@@ -120,6 +144,7 @@ def idle_stall(trajectory: Trajectory) -> CheckResult:
         severity=severity,
         summary=summary,
         citation_keys=(DQAF.key, SCIZOR.key),
+        claim_type=ClaimType.RISK,
         details={"stall_frac": round(stall_frac, 4), "longest_stall_s": round(longest_s, 2),
                  "duration_s": round(duration, 2)},
     )
@@ -148,6 +173,7 @@ def jerk_smoothness(trajectory: Trajectory) -> CheckResult:
         severity=severity,
         summary=f"LDJ = {ldj:.1f} (higher/less-negative = smoother)",
         citation_keys=(LDJ_SMOOTHNESS.key, DQAF.key),
+        claim_type=ClaimType.RISK,
         details={"ldj": round(ldj, 2)},
     )
 
@@ -174,7 +200,62 @@ def _log_dimensionless_jerk(pos: np.ndarray, dt: float) -> float | None:
     return float(-np.log(value))
 
 
-def joint_limit_saturation(trajectory: Trajectory) -> CheckResult:
+@dataclass
+class DimStats:
+    """Dataset-wide statistics for one state dim, aggregated once over every
+    episode before any episode's joint_limit_saturation runs (see
+    `dataset_dim_stats`). Never computed per-episode: a short precision
+    primitive that only visits a fraction of a joint's real range would
+    otherwise saturate its own local excursion by construction -- the exact
+    bug GRADING_TAXONOMY_V1.md's origin story names.
+    """
+
+    lo: float
+    hi: float
+    is_discrete: bool  # fewer than SATURATION_MIN_UNIQUE_VALUES distinct values dataset-wide
+
+
+def dataset_dim_stats(episodes: list[Episode]) -> dict[int, DimStats]:
+    """Aggregate per-state-dim (lo, hi, is_discrete) across every episode's
+    trajectory in the dataset. `is_discrete` only needs to know whether a dim's
+    distinct-value count clears `SATURATION_MIN_UNIQUE_VALUES` at all, so each
+    episode contributes at most that many rounded values to a capped running
+    set -- a genuinely continuous dim trips the cap within the first episode or
+    two, so this stays O(dataset size) without ever holding a full value set.
+    """
+    lo: dict[int, float] = {}
+    hi: dict[int, float] = {}
+    uniques: dict[int, set[float]] = {}
+    cap = SATURATION_MIN_UNIQUE_VALUES + 1
+
+    for ep in episodes:
+        traj = ep.trajectory
+        if traj is None or traj.state is None or len(traj.state) == 0:
+            continue
+        for d in range(traj.state.shape[1]):
+            col = traj.state[:, d]
+            col_lo, col_hi = float(col.min()), float(col.max())
+            lo[d] = min(lo.get(d, col_lo), col_lo)
+            hi[d] = max(hi.get(d, col_hi), col_hi)
+            seen = uniques.setdefault(d, set())
+            if len(seen) <= SATURATION_MIN_UNIQUE_VALUES:
+                seen.update(np.unique(np.round(col, 9))[:cap].tolist())
+
+    return {
+        d: DimStats(lo=lo[d], hi=hi[d], is_discrete=len(uniques[d]) <= SATURATION_MIN_UNIQUE_VALUES)
+        for d in lo
+    }
+
+
+def joint_limit_saturation(trajectory: Trajectory, dim_stats: dict[int, DimStats]) -> CheckResult:
+    """Time spent near each dim's DATASET-WIDE observed range -- never the
+    episode's own range (see `dataset_dim_stats`). Binary/near-constant dims
+    (a 0/1 gripper flag) are excluded outright: every sample of a binary dim
+    sits "at the limit" by construction, which is a proxy artifact, not a
+    finding. No declared joint limits exist anywhere in this codebase's data
+    model, so this is always a RISK-class training-value signal, never a
+    DEFECT -- see the module docstring.
+    """
     state = trajectory.state
     if state is None or len(trajectory.timestamps_s) < MIN_SAMPLES:
         return _na("episode_quality.joint_limit_saturation", "Joint-limit saturation")
@@ -186,15 +267,23 @@ def joint_limit_saturation(trajectory: Trajectory) -> CheckResult:
 
     labels = trajectory.state_labels
     per_dim: dict[str, float] = {}
+    excluded_discrete: list[str] = []
     for d in range(state.shape[1]):
-        col = state[:, d]
-        lo, hi = float(col.min()), float(col.max())
-        rng = hi - lo
-        if rng <= 1e-9:
-            continue
-        near_edge = (col <= lo + SATURATION_MARGIN_FRAC * rng) | (col >= hi - SATURATION_MARGIN_FRAC * rng)
-        frac, _ = _longest_run_frac(near_edge, min_run)
+        stats = dim_stats.get(d)
         label = labels[d] if labels and d < len(labels) else f"dim_{d}"
+        if stats is None:
+            continue
+        rng = stats.hi - stats.lo
+        if rng <= SATURATION_MIN_RANGE:
+            continue
+        if stats.is_discrete:
+            excluded_discrete.append(label)
+            continue
+        col = state[:, d]
+        near_edge = (
+            (col <= stats.lo + SATURATION_MARGIN_FRAC * rng) | (col >= stats.hi - SATURATION_MARGIN_FRAC * rng)
+        )
+        frac, _ = _longest_run_frac(near_edge, min_run)
         per_dim[label] = round(frac, 4)
 
     if not per_dim:
@@ -211,7 +300,7 @@ def joint_limit_saturation(trajectory: Trajectory) -> CheckResult:
 
     summary = (
         f"worst dim '{worst_dim}' saturated {worst_frac * 100:.1f}% of episode "
-        f"(observed-range proxy, no declared joint limits available)"
+        f"(dataset-wide observed-range proxy, no declared joint limits available)"
     )
     return CheckResult(
         check_id="episode_quality.joint_limit_saturation",
@@ -219,7 +308,12 @@ def joint_limit_saturation(trajectory: Trajectory) -> CheckResult:
         severity=severity,
         summary=summary,
         citation_keys=(DQAF.key,),
-        details={"per_dim_saturation_frac": per_dim, "worst_dim": worst_dim},
+        claim_type=ClaimType.RISK,
+        details={
+            "per_dim_saturation_frac": per_dim,
+            "worst_dim": worst_dim,
+            "excluded_discrete_dims": excluded_discrete,
+        },
     )
 
 
@@ -270,11 +364,31 @@ def gripper_chatter(trajectory: Trajectory) -> CheckResult:
         summary=f"{total_reversals} direction reversals total, peak {peak_rate_hz:.1f} Hz "
                 f"over a {CHATTER_WINDOW_S:g}s window",
         citation_keys=(DQAF.key,),
+        claim_type=ClaimType.RISK,
         details={"reversals": total_reversals, "peak_rate_hz": round(peak_rate_hz, 3)},
     )
 
 
 def action_state_consistency(trajectory: Trajectory) -> CheckResult:
+    """Element-wise action/state tracking error -- but only where that
+    comparison is commensurable at all (GRADING_TAXONOMY_V1.md section 2C,
+    the check's own origin story: it used to hard-FAIL every delta-action
+    dataset, e.g. BridgeData2, because a zero-centered delta action and an
+    absolute state are numerically incomparable, not because either is wrong).
+
+    A dim-count mismatch is an architectural property, not a defect: it's
+    typed CHARACTERISTIC and never reaches the element-wise comparison at all.
+    A dim-count match still isn't enough on its own -- action and state can
+    agree in dimensionality while meaning completely different things (a
+    delta-EEF action vs. an absolute joint state). The element-wise compare
+    only runs when the trajectory *declares* `action_space == "absolute"`;
+    every other value (delta/velocity/torque/tokenized) and the honest default
+    of undeclared (None) route to NOT_ASSESSED naming the missing declaration.
+    No ingest adapter in this codebase populates `action_space` yet (see
+    ingest/base.py), so today this element-wise path never runs at all --
+    which is the point: it must never again FAIL a dataset whose action
+    convention it doesn't actually know.
+    """
     state, action = trajectory.state, trajectory.action
     if state is None or action is None:
         return _na("episode_quality.action_state_consistency", "Action-state consistency")
@@ -283,10 +397,30 @@ def action_state_consistency(trajectory: Trajectory) -> CheckResult:
         return CheckResult(
             check_id="episode_quality.action_state_consistency",
             name="Action-state consistency",
-            severity=Severity.FAIL,
-            summary=f"action dim ({action.shape[1]}) != state dim ({state.shape[1]})",
+            severity=Severity.INFO,
+            summary=(
+                f"action dim ({action.shape[1]}) != state dim ({state.shape[1]}) -- action and state "
+                "spaces have different dimensionality, an architectural property, not a defect"
+            ),
             citation_keys=(DQAF.key, SCIZOR.key),
+            claim_type=ClaimType.CHARACTERISTIC,
             details={"state_dim": int(state.shape[1]), "action_dim": int(action.shape[1])},
+        )
+
+    if trajectory.action_space != "absolute":
+        declared = trajectory.action_space or "undeclared"
+        return CheckResult(
+            check_id="episode_quality.action_state_consistency",
+            name="Action-state consistency",
+            severity=Severity.NOT_APPLICABLE,
+            summary=(
+                f"action-space semantics is {declared!r}, not a declared 'absolute' position space -- "
+                "element-wise action/state comparison is only meaningful for absolute-position actions "
+                "(a delta/velocity/torque/tokenized action is not numerically comparable to state)"
+            ),
+            citation_keys=(DQAF.key, SCIZOR.key),
+            claim_type=ClaimType.NOT_ASSESSED,
+            details={"declared_action_space": trajectory.action_space},
         )
 
     n = min(len(state), len(action))
@@ -308,6 +442,7 @@ def action_state_consistency(trajectory: Trajectory) -> CheckResult:
         severity=severity,
         summary=f"consistency score {consistency:.2f} (1.0 = action always matches resulting state)",
         citation_keys=(DQAF.key, SCIZOR.key),
+        claim_type=ClaimType.RISK,
         details={"consistency_score": round(consistency, 4)},
     )
 
@@ -317,10 +452,17 @@ def _na(check_id: str, name: str) -> CheckResult:
         check_id=check_id, name=name, severity=Severity.NOT_APPLICABLE,
         summary="insufficient decodable state/action data for this episode",
         citation_keys=(),
+        claim_type=ClaimType.NOT_ASSESSED,
     )
 
 
-def run_checks(episode: Episode) -> list[CheckResult]:
+def run_checks(episode: Episode, dim_stats: dict[int, DimStats] | None = None) -> list[CheckResult]:
+    """`dim_stats` is the dataset-wide per-dim range/discreteness computed once
+    by `dataset_dim_stats` and threaded in by grading.py; it's optional here
+    only so this module's own tests can call `run_checks` without building a
+    whole dataset first (an empty dict just means every dim is unrecognized,
+    same as "no stats yet" -- joint_limit_saturation degrades to NOT_APPLICABLE).
+    """
     if episode.trajectory is None:
         return [
             _na("episode_quality.idle_stall", "Idle / stall detection"),
@@ -333,7 +475,7 @@ def run_checks(episode: Episode) -> list[CheckResult]:
     return [
         idle_stall(t),
         jerk_smoothness(t),
-        joint_limit_saturation(t),
+        joint_limit_saturation(t, dim_stats or {}),
         gripper_chatter(t),
         action_state_consistency(t),
     ]

@@ -2,7 +2,7 @@
 import numpy as np
 
 from deepen_grade.checks import plausibility as pl
-from deepen_grade.checks.base import Severity
+from deepen_grade.checks.base import ClaimType, Severity
 from deepen_grade.ingest.base import Dataset, Episode, Trajectory
 
 
@@ -26,6 +26,7 @@ def test_fires_when_no_trajectory_anywhere():
     assert result.severity == Severity.INFO
     assert "no state/action trajectories" in result.summary
     assert result.citation_keys == ()  # deliberately uncited
+    assert result.claim_type == ClaimType.CHARACTERISTIC
 
 
 def test_fires_when_state_never_moves():

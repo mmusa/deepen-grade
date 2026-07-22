@@ -8,13 +8,23 @@ Grounded in REP 105 (ROS coordinate-frame conventions) and the ISO/WD 26264-1
 companion paper's explicit requirement that "timing, coordinate frames,
 calibration, kinematics, units, and synchronization assumptions remain
 inspectable" (arXiv:2606.19769) -- these checks are exactly that inspection.
+
+CLAIM TYPES (GRADING_TAXONOMY_V1.md section 2): topic frequency/drops is
+measured against each topic's own median inter-message interval -- an
+objective, dataset-native reference, not an assumed standard -- so it's typed
+DEFECT. tf-tree integrity is DEFECT too: REP 105 requires a single-parent
+tree, full stop. schema/dim consistency (DEFECT) is a declared-vs-actual
+count/shape check, the least arguable claim there is. Cross-modal timestamp
+skew is different: its ms budget (SKEW_WARN_MS/SKEW_FAIL_MS below) is a
+Deepen convention parameterized by sensor class, not a sourced standard, so
+it's typed RISK -- a training-value signal, never a letter-moving claim.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from deepen_grade.checks.base import CheckResult, Severity
+from deepen_grade.checks.base import CheckResult, ClaimType, Severity
 from deepen_grade.citations import ASAM_OPENLABEL, DATA_STANDARDS_HUMANOID, REP_105
 from deepen_grade.ingest.base import Dataset, Episode
 
@@ -62,6 +72,7 @@ def topic_frequency_and_drops(episode: Episode) -> CheckResult:
             severity=Severity.NOT_APPLICABLE,
             summary="not enough messages per topic to analyze frequency",
             citation_keys=(),
+            claim_type=ClaimType.NOT_ASSESSED,
         )
 
     if total_gaps == 0:
@@ -82,6 +93,7 @@ def topic_frequency_and_drops(episode: Episode) -> CheckResult:
         severity=severity,
         summary=summary,
         citation_keys=(DATA_STANDARDS_HUMANOID.key,),
+        claim_type=ClaimType.DEFECT,
         details={"topics": per_topic, "total_gaps": total_gaps,
                  "drop_gap_multiplier": DROP_GAP_MULTIPLIER},
     )
@@ -109,6 +121,7 @@ def cross_modal_timestamp_skew(episode: Episode) -> CheckResult:
             severity=Severity.NOT_APPLICABLE,
             summary="fewer than 2 timestamped sensing modalities present",
             citation_keys=(),
+            claim_type=ClaimType.NOT_ASSESSED,
         )
 
     starts = {t.name: float(t.timestamps_s[0]) for t in modal_topics}
@@ -136,6 +149,7 @@ def cross_modal_timestamp_skew(episode: Episode) -> CheckResult:
         severity=severity,
         summary=summary,
         citation_keys=(DATA_STANDARDS_HUMANOID.key,),
+        claim_type=ClaimType.RISK,
         details={"skew_ms": skews_ms, "warn_ms": SKEW_WARN_MS, "fail_ms": SKEW_FAIL_MS},
     )
 
@@ -148,6 +162,7 @@ def tf_tree_integrity(episode: Episode) -> CheckResult:
             severity=Severity.NOT_APPLICABLE,
             summary="format has no tf concept",
             citation_keys=(),
+            claim_type=ClaimType.NOT_ASSESSED,
         )
     if not episode.tf_edges:
         return CheckResult(
@@ -156,6 +171,7 @@ def tf_tree_integrity(episode: Episode) -> CheckResult:
             severity=Severity.NOT_APPLICABLE,
             summary="no /tf or /tf_static messages found in this recording",
             citation_keys=(),
+            claim_type=ClaimType.NOT_ASSESSED,
         )
 
     parents_of: dict[str, set[str]] = {}
@@ -187,6 +203,7 @@ def tf_tree_integrity(episode: Episode) -> CheckResult:
         severity=severity,
         summary=summary,
         citation_keys=(REP_105.key,),
+        claim_type=ClaimType.DEFECT,
         details={
             "n_frames": len(parents_of),
             "multi_parent_frames": multi_parent,
@@ -232,6 +249,7 @@ def schema_and_dim_consistency(dataset: Dataset) -> CheckResult:
             severity=Severity.NOT_APPLICABLE,
             summary="only one episode in this dataset; nothing to compare across episodes",
             citation_keys=(),
+            claim_type=ClaimType.NOT_ASSESSED,
         )
 
     type_by_name: dict[str, set[str]] = {}
@@ -271,6 +289,7 @@ def schema_and_dim_consistency(dataset: Dataset) -> CheckResult:
         severity=severity,
         summary=summary,
         citation_keys=(DATA_STANDARDS_HUMANOID.key, ASAM_OPENLABEL.key),
+        claim_type=ClaimType.DEFECT,
         details={
             "schema_mismatches": schema_mismatches,
             "dim_mismatches": dim_mismatches,

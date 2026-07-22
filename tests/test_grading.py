@@ -3,13 +3,15 @@ import json
 
 import numpy as np
 
-from deepen_grade.checks.base import CheckResult, Severity
+from deepen_grade.checks.base import CheckResult, ClaimType, Severity
 from deepen_grade.grading import (
     CAL_NOT_ASSESSED,
     CAL_PRESENT_UNVERIFIED,
     CAL_STRUCTURALLY_BROKEN,
     CALIBRATION_CHECK_ID,
+    GRADE_SCHEMA,
     grade_dataset,
+    integrity_score,
     letter_from_score,
     score_from_results,
 )
@@ -17,8 +19,9 @@ from deepen_grade.ingest.base import CalibrationInfo, Dataset, Episode, TopicInf
 from deepen_grade.report.json_report import build_report
 
 
-def _result(severity):
-    return CheckResult(check_id="x", name="x", severity=severity, summary="s", citation_keys=("rep105",))
+def _result(severity, claim_type=ClaimType.DEFECT, check_id="x"):
+    return CheckResult(check_id=check_id, name="x", severity=severity, summary="s", citation_keys=("rep105",),
+                        claim_type=claim_type)
 
 
 def test_score_from_results_perfect():
@@ -164,3 +167,74 @@ def test_grade_dataset_without_on_progress_never_calls_back():
     ds = Dataset(source="t", format="lerobot", episodes=[_clean_episode("a")])
     grade = grade_dataset(ds)  # default on_progress=None must not raise
     assert grade.partial is False
+
+
+# --- claim-type CI guard: only DEFECT may ever move the letter --------------
+#
+# This introspects `integrity_score` (the actual aggregation function) with
+# synthetic results built for every claim type, rather than spot-checking a
+# real dataset -- a real dataset can accidentally "pass" this kind of test if
+# no check happens to fire. Fails the build if any non-DEFECT claim type ever
+# starts contributing.
+
+
+def test_only_defect_class_touches_integrity_score():
+    all_fail_defect = [_result(Severity.FAIL, ClaimType.DEFECT, check_id="defect_check")] * 50
+    all_fail_risk = [_result(Severity.FAIL, ClaimType.RISK, check_id="risk_check")] * 50
+    all_fail_characteristic = [_result(Severity.FAIL, ClaimType.CHARACTERISTIC, check_id="char_check")] * 50
+    all_fail_by_design = [_result(Severity.FAIL, ClaimType.BY_DESIGN, check_id="by_design_check")] * 50
+    all_fail_not_assessed = [_result(Severity.FAIL, ClaimType.NOT_ASSESSED, check_id="na_check")] * 50
+
+    # A mountain of FAILs typed as anything but DEFECT must never move the score.
+    assert integrity_score(all_fail_risk) == 100
+    assert integrity_score(all_fail_characteristic) == 100
+    assert integrity_score(all_fail_by_design) == 100
+    assert integrity_score(all_fail_not_assessed) == 100
+    assert integrity_score(all_fail_risk + all_fail_characteristic + all_fail_by_design + all_fail_not_assessed) == 100
+
+    # The same FAILs typed DEFECT must tank the score -- proves the guard
+    # above isn't just "integrity_score always returns 100."
+    assert integrity_score(all_fail_defect) == 0
+
+    # Mixing non-DEFECT noise in with a real DEFECT signal must not dilute it
+    # (worst-class-bounded, not averaged) or hide it.
+    mixed = all_fail_defect + all_fail_risk + all_fail_characteristic + all_fail_not_assessed
+    assert integrity_score(mixed) == 0
+
+
+def test_worst_class_bounded_not_averaged():
+    """One fully-broken DEFECT class among clean ones must drive the score to
+    0, not be averaged away by the clean classes -- GRADING_TAXONOMY_V1.md
+    section 4.3's worked edge case."""
+    broken_class = [_result(Severity.FAIL, ClaimType.DEFECT, check_id="broken")] * 10
+    clean_class_a = [_result(Severity.PASS, ClaimType.DEFECT, check_id="clean_a")] * 10
+    clean_class_b = [_result(Severity.PASS, ClaimType.DEFECT, check_id="clean_b")] * 10
+    assert integrity_score(broken_class + clean_class_a + clean_class_b) == 0
+
+
+def test_integrity_score_is_defect_density_not_a_single_fail_count():
+    """A 20%-defective class scores 80, matching `100 * (1 - density)` --
+    the exact functional form, not just "any FAIL drops the score to 0"."""
+    results = (
+        [_result(Severity.FAIL, ClaimType.DEFECT, check_id="c")] * 2
+        + [_result(Severity.PASS, ClaimType.DEFECT, check_id="c")] * 8
+    )
+    assert integrity_score(results) == 80
+
+
+def test_defect_classes_and_training_value_appear_on_the_dataset_grade():
+    ds = Dataset(source="test", format="lerobot", episodes=[_clean_episode("a"), _clean_episode("b")])
+    grade = grade_dataset(ds)
+    assert grade.grade_schema == GRADE_SCHEMA
+    assert "hygiene.topic_frequency" in grade.defect_classes
+    # idle_stall etc. are RISK-typed and must show up in training_value, never in defect_classes.
+    assert "episode_quality.idle_stall" in grade.training_value
+    assert "episode_quality.idle_stall" not in grade.defect_classes
+    for entry in grade.defect_classes.values():
+        assert 0.0 <= entry["density"] <= 1.0
+
+    report = build_report(grade)
+    assert report["grade_schema"] == GRADE_SCHEMA
+    assert report["defect_classes"] == grade.defect_classes
+    assert report["training_value"] == grade.training_value
+    json.dumps(report)  # both new sections must be JSON-serializable

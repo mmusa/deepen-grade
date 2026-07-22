@@ -2,7 +2,7 @@
 import numpy as np
 
 from deepen_grade.checks import hygiene
-from deepen_grade.checks.base import Severity
+from deepen_grade.checks.base import ClaimType, Severity
 from deepen_grade.ingest.base import Dataset, Episode, TfEdge, TopicInfo, Trajectory
 
 
@@ -24,6 +24,9 @@ def test_topic_frequency_detects_drop():
     result = hygiene.topic_frequency_and_drops(ep)
     assert result.details["total_gaps"] >= 1
     assert result.severity in (Severity.WARN, Severity.FAIL)
+    # Measured against the topic's own median inter-message interval, not an
+    # assumed standard -- objective enough to be DEFECT-eligible.
+    assert result.claim_type == ClaimType.DEFECT
 
 
 def test_topic_frequency_not_applicable_for_sparse_topic():
@@ -51,6 +54,9 @@ def test_cross_modal_skew_detects_offset():
     result = hygiene.cross_modal_timestamp_skew(ep)
     assert result.severity == Severity.FAIL
     assert result.details["skew_ms"]["/joint_states"] > 50.0
+    # The ms budget is a Deepen convention parameterized by sensor class, not a
+    # sourced standard -- RISK (training-value), never letter-eligible.
+    assert result.claim_type == ClaimType.RISK
 
 
 def test_tf_tree_na_when_no_tf_concept():
@@ -80,6 +86,8 @@ def test_tf_tree_detects_multi_parent():
     result = hygiene.tf_tree_integrity(ep)
     assert result.severity == Severity.FAIL
     assert "arm_link" in result.details["multi_parent_frames"]
+    # REP 105 requires a single-parent tree, full stop -- DEFECT-eligible.
+    assert result.claim_type == ClaimType.DEFECT
 
 
 def test_tf_tree_detects_static_dynamic_conflict():
@@ -119,6 +127,8 @@ def test_schema_dim_consistency_detects_dim_mismatch():
     result = hygiene.schema_and_dim_consistency(ds)
     assert result.severity == Severity.FAIL
     assert "b" in result.details["dim_mismatches"]
+    # A declared-vs-actual shape check -- the least arguable DEFECT there is.
+    assert result.claim_type == ClaimType.DEFECT
 
 
 def test_schema_dim_consistency_detects_schema_mismatch():
